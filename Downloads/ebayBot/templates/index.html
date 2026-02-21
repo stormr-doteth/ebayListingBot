@@ -157,37 +157,65 @@
       font-size: 16px;
     }
 
-    /* Preview */
-    #preview-wrap {
+    /* Thumbnail strip */
+    #thumb-strip {
       display: none;
       margin-top: 20px;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #thumb-strip.has-items { display: flex; }
+
+    .thumb-item {
       position: relative;
-    }
-
-    #preview-wrap img {
-      width: 100%;
-      max-height: 320px;
-      object-fit: contain;
+      width: 100px;
+      height: 100px;
       border-radius: 4px;
-      border: 1px solid var(--border);
-      background: var(--surface);
+      border: 2px solid var(--border);
+      overflow: hidden;
+      flex-shrink: 0;
     }
 
-    .preview-remove {
+    .thumb-item.primary { border-color: var(--accent); }
+
+    .thumb-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .thumb-remove {
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 4px;
+      right: 4px;
       background: rgba(0,0,0,0.8);
       border: 1px solid var(--border);
       color: var(--text);
-      width: 32px;
-      height: 32px;
-      border-radius: 4px;
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
+      line-height: 1;
+    }
+
+    .thumb-badge {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--accent);
+      color: #000;
+      font-size: 9px;
+      font-weight: 700;
+      text-align: center;
+      padding: 2px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
     }
 
     /* Notes */
@@ -354,6 +382,60 @@
     }
 
     .meta-value { color: var(--text); }
+
+    .meta-input {
+      width: 100%;
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 4px 0;
+      transition: border-color 0.2s;
+    }
+
+    .meta-input:focus {
+      outline: none;
+      border-bottom-color: var(--accent);
+    }
+
+    .meta-input::placeholder { color: var(--muted); }
+
+    .game-title-input {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 800;
+      background: transparent;
+      border: 1px solid transparent;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      color: var(--text);
+      padding: 4px 0;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .game-title-input:focus { outline: none; border-bottom-color: var(--accent); }
+
+    .platform-input {
+      background: var(--accent2);
+      color: #000;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      padding: 4px 10px;
+      border-radius: 2px;
+      border: none;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      width: 140px;
+      text-align: center;
+    }
+
+    .platform-input:focus { outline: 2px solid var(--accent); }
 
     /* Price row */
     .price-row {
@@ -618,7 +700,7 @@
 
 <div class="container">
   <header>
-    <div class="header-tag">// retro game lister v1.0</div>
+    <div class="header-tag">// retro game lister v1.2</div>
     <h1>Retro<span>List</span></h1>
     <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude.</p>
   </header>
@@ -628,18 +710,15 @@
     <div class="section-label">// 01 — Upload Photo</div>
 
     <div class="drop-zone" id="drop-zone">
-      <input type="file" id="photo-input" accept="image/*" capture="environment" />
+      <input type="file" id="photo-input" accept="image/*" multiple />
       <span class="drop-icon">📷</span>
       <div class="drop-text">
-        <strong>Drop photo here or tap to shoot</strong>
-        Works on phone camera too
+        <strong>Drop photos here or tap to shoot</strong>
+        First photo used for ID — add more for listing gallery
       </div>
     </div>
 
-    <div id="preview-wrap">
-      <img id="preview-img" src="" alt="Preview" />
-      <button class="preview-remove" id="remove-photo">✕</button>
-    </div>
+    <div id="thumb-strip"></div>
 
     <div class="notes-wrap">
       <textarea id="extra-notes" placeholder="Any extra notes? e.g. 'label has small tear top-right, cartridge works perfectly, tested on my N64'"></textarea>
@@ -661,44 +740,44 @@
     <hr class="divider" />
     <div class="section-label">// 02 — Review & Edit</div>
 
-    <!-- Game info card -->
+    <!-- Game info card (all fields editable) -->
     <div class="game-card" id="game-card">
       <div class="game-card-header">
-        <div class="game-title" id="r-game-title">—</div>
-        <div class="game-platform" id="r-platform">—</div>
+        <input type="text" class="field-input game-title-input" id="r-game-title" placeholder="Game Title" />
+        <input type="text" class="field-input platform-input" id="r-platform" placeholder="Platform" />
       </div>
       <div class="game-meta">
         <div class="meta-item">
           <div class="meta-label">Year</div>
-          <div class="meta-value" id="r-year">—</div>
+          <input type="text" class="meta-input" id="r-year" placeholder="—" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Region</div>
-          <div class="meta-value" id="r-region">—</div>
+          <input type="text" class="meta-input" id="r-region" placeholder="USA" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Includes</div>
-          <div class="meta-value" id="r-includes">—</div>
+          <input type="text" class="meta-input" id="r-includes" placeholder="Game" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Condition</div>
-          <div class="meta-value" id="r-condition-notes">—</div>
+          <input type="text" class="meta-input" id="r-condition-notes" placeholder="—" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Publisher</div>
-          <div class="meta-value" id="r-publisher">—</div>
+          <input type="text" class="meta-input" id="r-publisher" placeholder="—" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Genre</div>
-          <div class="meta-value" id="r-genre">—</div>
+          <input type="text" class="meta-input" id="r-genre" placeholder="—" />
         </div>
         <div class="meta-item">
           <div class="meta-label">Rating</div>
-          <div class="meta-value" id="r-rating">—</div>
+          <input type="text" class="meta-input" id="r-rating" placeholder="—" />
         </div>
         <div class="meta-item">
           <div class="meta-label">MPN</div>
-          <div class="meta-value" id="r-mpn">—</div>
+          <input type="text" class="meta-input" id="r-mpn" placeholder="—" />
         </div>
       </div>
     </div>
@@ -738,6 +817,12 @@
       </div>
 
       <div class="field-group">
+        <div class="field-label">Package Weight (oz)</div>
+        <input type="number" class="field-input" id="edit-weight" step="0.1" min="1" max="999" value="8" />
+        <div class="char-count" id="weight-hint">Default: ~4oz loose cart, ~12oz CIB</div>
+      </div>
+
+      <div class="field-group">
         <div class="field-label">List Price (USD)</div>
         <div class="price-input-wrap">
           <span>$</span>
@@ -774,13 +859,12 @@
   // ── State ──────────────────────────────
   let currentData = null;
   let selectedCondition = 'USED_GOOD';
+  let selectedFiles = [];  // Array of File objects
 
   // ── Elements ───────────────────────────
   const photoInput = document.getElementById('photo-input');
   const dropZone = document.getElementById('drop-zone');
-  const previewWrap = document.getElementById('preview-wrap');
-  const previewImg = document.getElementById('preview-img');
-  const removePhoto = document.getElementById('remove-photo');
+  const thumbStrip = document.getElementById('thumb-strip');
   const analyzeBtn = document.getElementById('analyze-btn');
   const statusBar = document.getElementById('status-bar');
   const results = document.getElementById('results');
@@ -790,9 +874,8 @@
 
   // ── Photo handling ─────────────────────
   photoInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    showPreview(file);
+    addFiles(Array.from(e.target.files));
+    photoInput.value = '';  // reset so same file can be re-added
   });
 
   dropZone.addEventListener('dragover', (e) => {
@@ -805,27 +888,67 @@
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) showPreview(file);
+    addFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')));
   });
 
-  function showPreview(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      previewImg.src = e.target.result;
-      previewWrap.style.display = 'block';
-      dropZone.style.display = 'none';
-      analyzeBtn.disabled = false;
-    };
-    reader.readAsDataURL(file);
+  function addFiles(files) {
+    if (!files.length) return;
+    selectedFiles = selectedFiles.concat(files);
+    renderThumbs();
+    analyzeBtn.disabled = false;
   }
 
-  removePhoto.addEventListener('click', () => {
-    previewWrap.style.display = 'none';
-    dropZone.style.display = 'block';
-    photoInput.value = '';
-    analyzeBtn.disabled = true;
-  });
+  function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderThumbs();
+    if (selectedFiles.length === 0) {
+      analyzeBtn.disabled = true;
+    }
+  }
+
+  function renderThumbs() {
+    thumbStrip.innerHTML = '';
+    if (selectedFiles.length === 0) {
+      thumbStrip.classList.remove('has-items');
+      dropZone.style.display = 'block';
+      return;
+    }
+    thumbStrip.classList.add('has-items');
+    dropZone.style.display = 'none';
+
+    selectedFiles.forEach((file, i) => {
+      const item = document.createElement('div');
+      item.className = 'thumb-item' + (i === 0 ? ' primary' : '');
+
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      item.appendChild(img);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'thumb-remove';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => removeFile(i));
+      item.appendChild(removeBtn);
+
+      if (i === 0) {
+        const badge = document.createElement('div');
+        badge.className = 'thumb-badge';
+        badge.textContent = 'ID Photo';
+        item.appendChild(badge);
+      }
+
+      thumbStrip.appendChild(item);
+    });
+
+    // Add "+" button to add more photos
+    const addMore = document.createElement('div');
+    addMore.className = 'thumb-item';
+    addMore.style.cssText = 'display:flex;align-items:center;justify-content:center;cursor:pointer;border-style:dashed;';
+    addMore.innerHTML = '<span style="font-size:28px;color:var(--muted)">+</span>';
+    addMore.addEventListener('click', () => photoInput.click());
+    thumbStrip.appendChild(addMore);
+  }
 
   // ── Title char counter ─────────────────
   editTitle.addEventListener('input', () => {
@@ -846,11 +969,10 @@
 
   // ── Analyze ────────────────────────────
   analyzeBtn.addEventListener('click', async () => {
-    const file = photoInput.files[0];
-    if (!file) return;
+    if (selectedFiles.length === 0) return;
 
     const formData = new FormData();
-    formData.append('photo', file);
+    selectedFiles.forEach(f => formData.append('photos', f));
     formData.append('notes', document.getElementById('extra-notes').value);
 
     analyzeBtn.disabled = true;
@@ -897,22 +1019,22 @@
   function populateResults(data) {
     const { game_info, price_info, listing } = data;
 
-    document.getElementById('r-game-title').textContent = game_info.game_title;
-    document.getElementById('r-platform').textContent = game_info.platform;
-    document.getElementById('r-year').textContent = game_info.year || '—';
-    document.getElementById('r-region').textContent = game_info.region || '—';
+    document.getElementById('r-game-title').value = game_info.game_title || '';
+    document.getElementById('r-platform').value = game_info.platform || '';
+    document.getElementById('r-year').value = game_info.year || '';
+    document.getElementById('r-region').value = game_info.region || '';
 
     const includes = [
       'Cartridge',
       game_info.has_manual && 'Manual',
       game_info.has_box && 'Box'
     ].filter(Boolean).join(', ');
-    document.getElementById('r-includes').textContent = includes;
-    document.getElementById('r-condition-notes').textContent = game_info.condition_notes;
-    document.getElementById('r-publisher').textContent = game_info.publisher || '—';
-    document.getElementById('r-genre').textContent = game_info.genre || '—';
-    document.getElementById('r-rating').textContent = game_info.rating || '—';
-    document.getElementById('r-mpn').textContent = game_info.mpn || '—';
+    document.getElementById('r-includes').value = includes;
+    document.getElementById('r-condition-notes').value = game_info.condition_notes || '';
+    document.getElementById('r-publisher').value = game_info.publisher || '';
+    document.getElementById('r-genre').value = game_info.genre || '';
+    document.getElementById('r-rating').value = game_info.rating || '';
+    document.getElementById('r-mpn').value = game_info.mpn || '';
 
     document.getElementById('r-loose-price').textContent =
       price_info.loose_price ? `$${price_info.loose_price.toFixed(2)}` : 'N/A';
@@ -925,6 +1047,10 @@
     editTitle.dispatchEvent(new Event('input'));
 
     editPrice.value = listing.suggested_price.toFixed(2);
+
+    // Smart weight default: ~4oz loose cart, ~12oz CIB
+    const hasBox = game_info.has_box;
+    document.getElementById('edit-weight').value = hasBox ? 12 : 4;
 
     document.getElementById('price-reasoning').textContent = listing.price_reasoning || '';
 
@@ -951,13 +1077,29 @@
   publishBtn.addEventListener('click', async () => {
     if (!currentData) return;
 
+    // Read edited game info fields
+    const editedGameInfo = {
+      ...currentData.game_info,
+      game_title: document.getElementById('r-game-title').value,
+      platform: document.getElementById('r-platform').value,
+      year: document.getElementById('r-year').value,
+      region: document.getElementById('r-region').value,
+      condition_notes: document.getElementById('r-condition-notes').value,
+      publisher: document.getElementById('r-publisher').value,
+      genre: document.getElementById('r-genre').value,
+      rating: document.getElementById('r-rating').value,
+      mpn: document.getElementById('r-mpn').value,
+    };
+
     const payload = {
-      game_info: currentData.game_info,
+      game_info: editedGameInfo,
+      image_paths: currentData.image_paths || [],
       listing: {
         ...currentData.listing,
         title: editTitle.value,
         suggested_price: parseFloat(editPrice.value),
-        condition: selectedCondition
+        condition: selectedCondition,
+        weight_oz: parseFloat(document.getElementById('edit-weight').value) || 8
       }
     };
 
@@ -976,11 +1118,10 @@
         showToast(`✅ Listed! ID: ${result.listing_id}`);
         publishBtn.textContent = '✓ Published!';
       } else {
-        // No eBay token = show the listing details to copy-paste
-        showToast('📋 No eBay token — copy listing below');
+        showToast('✗ Publish failed');
         publishBtn.textContent = '🚀 Publish to eBay';
         publishBtn.disabled = false;
-        alert(`eBay not connected yet.\n\nTitle:\n${payload.listing.title}\n\nPrice: $${payload.listing.suggested_price}\n\nSet up your EBAY_TOKEN env var to publish directly!`);
+        alert(`Publish failed: ${result.error}\n\nTitle:\n${payload.listing.title}\n\nPrice: $${payload.listing.suggested_price}`);
       }
     } catch (err) {
       showToast('✗ Error publishing');
@@ -999,13 +1140,17 @@
   // ── Reset ──────────────────────────────
   document.getElementById('reset-btn').addEventListener('click', () => {
     currentData = null;
+    selectedFiles = [];
     results.style.display = 'none';
     statusBar.style.display = 'none';
-    previewWrap.style.display = 'none';
+    thumbStrip.innerHTML = '';
+    thumbStrip.classList.remove('has-items');
     dropZone.style.display = 'block';
     photoInput.value = '';
     analyzeBtn.disabled = true;
     analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
+    publishBtn.disabled = false;
+    publishBtn.textContent = '🚀 Publish to eBay';
     document.getElementById('extra-notes').value = '';
     document.querySelectorAll('#s1,#s2,#s3').forEach(el => {
       el.className = 'status-line';
