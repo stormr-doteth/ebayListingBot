@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RetroList — eBay Game Lister</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --surface2: #1c1c28;
+      --border: #2a2a3d;
+      --accent: #ff6b2b;
+      --accent2: #ffcc00;
+      --green: #39ff14;
+      --text: #e8e8f0;
+      --muted: #6b6b8a;
+      --font-mono: 'Space Mono', monospace;
+      --font-display: 'Syne', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.08) 2px,
+        rgba(0,0,0,0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    /* Grid background */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,107,43,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,107,43,0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Header */
+    header {
+      padding: 48px 0 40px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 48px;
+    }
+
+    .header-tag {
+      font-size: 11px;
+      letter-spacing: 0.3em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+
+    h1 span {
+      color: var(--accent);
+      position: relative;
+    }
+
+    .header-sub {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* Upload zone */
+    .upload-section {
+      margin-bottom: 40px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 4px;
+      padding: 60px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+      background: var(--surface);
+    }
+
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(255,107,43,0.05);
+    }
+
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .drop-text {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .drop-text strong {
+      color: var(--text);
+      display: block;
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    /* Preview */
+    #preview-wrap {
+      display: none;
+      margin-top: 20px;
+      position: relative;
+    }
+
+    #preview-wrap img {
+      width: 100%;
+      max-height: 320px;
+      object-fit: contain;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .preview-remove {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.8);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Notes */
+    .notes-wrap {
+      margin-top: 20px;
+    }
+
+    textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 14px 16px;
+      resize: vertical;
+      min-height: 80px;
+      transition: border-color 0.2s;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    textarea::placeholder { color: var(--muted); }
+
+    /* Analyze button */
+    .btn-analyze {
+      width: 100%;
+      margin-top: 20px;
+      padding: 18px;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-analyze:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(255,107,43,0.4);
+    }
+
+    .btn-analyze:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Status bar */
+    #status-bar {
+      display: none;
+      margin-top: 24px;
+      padding: 14px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+    }
+
+    .status-line.active { color: var(--accent2); }
+    .status-line.done { color: var(--green); }
+    .status-line.error { color: #ff4444; }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .dot.pulse {
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.7); }
+    }
+
+    /* Results */
+    #results {
+      display: none;
+      animation: fadeUp 0.4s ease;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+
+    /* Game card */
+    .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .game-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+
+    .game-title {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .game-platform {
+      background: var(--accent2);
+      color: #000;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 2px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .game-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .meta-item {
+      font-size: 12px;
+    }
+
+    .meta-label {
+      color: var(--muted);
+      margin-bottom: 2px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .meta-value { color: var(--text); }
+
+    /* Price row */
+    .price-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+
+    .price-box {
+      flex: 1;
+      min-width: 120px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .price-box.suggested {
+      border-color: var(--accent);
+      background: rgba(255,107,43,0.08);
+    }
+
+    .price-label {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .price-value {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .price-box.suggested .price-value { color: var(--accent); }
+
+    /* Editable listing fields */
+    .listing-section {
+      margin-bottom: 24px;
+    }
+
+    .field-group {
+      margin-bottom: 16px;
+    }
+
+    .field-label {
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .field-input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 12px 14px;
+      transition: border-color 0.2s;
+    }
+
+    .field-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .char-count {
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .char-count.over { color: #ff4444; }
+
+    /* Condition selector */
+    .condition-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    @media (min-width: 500px) {
+      .condition-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .condition-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 10px 6px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+
+    .condition-btn:hover, .condition-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(255,107,43,0.08);
+    }
+
+    /* Price input */
+    .price-input-wrap {
+      position: relative;
+    }
+
+    .price-input-wrap span {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+    }
+
+    .price-input-wrap input {
+      padding-left: 28px;
+    }
+
+    /* Publish button */
+    .btn-publish {
+      width: 100%;
+      padding: 18px;
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+    }
+
+    .btn-publish:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
+    }
+
+    .btn-publish:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-preview {
+      width: 100%;
+      padding: 14px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 12px;
+    }
+
+    .btn-preview:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Success toast */
+    #toast {
+      display: none;
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--green);
+      color: #000;
+      padding: 16px 28px;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 15px;
+      z-index: 200;
+      animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0); opacity: 1; }
+    }
+
+    /* Description preview modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 150;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 28px;
+      max-width: 600px;
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 20px;
+    }
+
+    .description-preview {
+      font-family: sans-serif;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    /* Reset link */
+    .reset-link {
+      display: inline-block;
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    .reset-link:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="header-tag">// retro game lister v1.0</div>
+    <h1>Retro<span>List</span></h1>
+    <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude.</p>
+  </header>
+
+  <!-- Upload section -->
+  <div class="upload-section">
+    <div class="section-label">// 01 — Upload Photo</div>
+
+    <div class="drop-zone" id="drop-zone">
+      <input type="file" id="photo-input" accept="image/*" capture="environment" />
+      <span class="drop-icon">📷</span>
+      <div class="drop-text">
+        <strong>Drop photo here or tap to shoot</strong>
+        Works on phone camera too
+      </div>
+    </div>
+
+    <div id="preview-wrap">
+      <img id="preview-img" src="" alt="Preview" />
+      <button class="preview-remove" id="remove-photo">✕</button>
+    </div>
+
+    <div class="notes-wrap">
+      <textarea id="extra-notes" placeholder="Any extra notes? e.g. 'label has small tear top-right, cartridge works perfectly, tested on my N64'"></textarea>
+    </div>
+
+    <button class="btn-analyze" id="analyze-btn" disabled>
+      ⚡ Analyze & Generate Listing
+    </button>
+
+    <div id="status-bar">
+      <div class="status-line" id="s1"><span class="dot"></span> Identifying game...</div>
+      <div class="status-line" id="s2"><span class="dot"></span> Checking market prices...</div>
+      <div class="status-line" id="s3"><span class="dot"></span> Generating listing...</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+    <hr class="divider" />
+    <div class="section-label">// 02 — Review & Edit</div>
+
+    <!-- Game info card -->
+    <div class="game-card" id="game-card">
+      <div class="game-card-header">
+        <div class="game-title" id="r-game-title">—</div>
+        <div class="game-platform" id="r-platform">—</div>
+      </div>
+      <div class="game-meta">
+        <div class="meta-item">
+          <div class="meta-label">Year</div>
+          <div class="meta-value" id="r-year">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Region</div>
+          <div class="meta-value" id="r-region">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Includes</div>
+          <div class="meta-value" id="r-includes">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Condition</div>
+          <div class="meta-value" id="r-condition-notes">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Publisher</div>
+          <div class="meta-value" id="r-publisher">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Genre</div>
+          <div class="meta-value" id="r-genre">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Rating</div>
+          <div class="meta-value" id="r-rating">—</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">MPN</div>
+          <div class="meta-value" id="r-mpn">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price comparison -->
+    <div class="price-row">
+      <div class="price-box">
+        <div class="price-label">Market Loose</div>
+        <div class="price-value" id="r-loose-price">—</div>
+      </div>
+      <div class="price-box">
+        <div class="price-label">Market CIB</div>
+        <div class="price-value" id="r-cib-price">—</div>
+      </div>
+      <div class="price-box suggested">
+        <div class="price-label">Your Price</div>
+        <div class="price-value" id="r-suggested-price">—</div>
+      </div>
+    </div>
+
+    <!-- Editable listing fields -->
+    <div class="listing-section">
+      <div class="field-group">
+        <div class="field-label">eBay Title</div>
+        <input type="text" class="field-input" id="edit-title" maxlength="80" />
+        <div class="char-count" id="title-count">0 / 80</div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">Condition</div>
+        <div class="condition-grid" id="condition-grid">
+          <button class="condition-btn" data-val="USED_LIKE_NEW">Like New</button>
+          <button class="condition-btn" data-val="USED_VERY_GOOD">Very Good</button>
+          <button class="condition-btn active" data-val="USED_GOOD">Good</button>
+          <button class="condition-btn" data-val="USED_ACCEPTABLE">Acceptable</button>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <div class="field-label">List Price (USD)</div>
+        <div class="price-input-wrap">
+          <span>$</span>
+          <input type="number" class="field-input" id="edit-price" step="0.01" min="0.99" />
+        </div>
+        <div class="char-count" id="price-reasoning">—</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <button class="btn-preview" id="preview-desc-btn">👁 Preview Description</button>
+    <button class="btn-publish" id="publish-btn">🚀 Publish to eBay</button>
+
+    <div style="text-align:center">
+      <span class="reset-link" id="reset-btn">← List another game</span>
+    </div>
+  </div>
+</div>
+
+<!-- Description preview modal -->
+<div class="modal-overlay" id="desc-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <strong>Description Preview</strong>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="description-preview" id="desc-preview-content"></div>
+  </div>
+</div>
+
+<div id="toast">✅ Listed on eBay!</div>
+
+<script>
+  // ── State ──────────────────────────────
+  let currentData = null;
+  let selectedCondition = 'USED_GOOD';
+
+  // ── Elements ───────────────────────────
+  const photoInput = document.getElementById('photo-input');
+  const dropZone = document.getElementById('drop-zone');
+  const previewWrap = document.getElementById('preview-wrap');
+  const previewImg = document.getElementById('preview-img');
+  const removePhoto = document.getElementById('remove-photo');
+  const analyzeBtn = document.getElementById('analyze-btn');
+  const statusBar = document.getElementById('status-bar');
+  const results = document.getElementById('results');
+  const editTitle = document.getElementById('edit-title');
+  const editPrice = document.getElementById('edit-price');
+  const publishBtn = document.getElementById('publish-btn');
+
+  // ── Photo handling ─────────────────────
+  photoInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    showPreview(file);
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) showPreview(file);
+  });
+
+  function showPreview(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      previewImg.src = e.target.result;
+      previewWrap.style.display = 'block';
+      dropZone.style.display = 'none';
+      analyzeBtn.disabled = false;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  removePhoto.addEventListener('click', () => {
+    previewWrap.style.display = 'none';
+    dropZone.style.display = 'block';
+    photoInput.value = '';
+    analyzeBtn.disabled = true;
+  });
+
+  // ── Title char counter ─────────────────
+  editTitle.addEventListener('input', () => {
+    const len = editTitle.value.length;
+    const counter = document.getElementById('title-count');
+    counter.textContent = `${len} / 80`;
+    counter.className = 'char-count' + (len > 80 ? ' over' : '');
+  });
+
+  // ── Condition buttons ──────────────────
+  document.getElementById('condition-grid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.condition-btn');
+    if (!btn) return;
+    document.querySelectorAll('.condition-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedCondition = btn.dataset.val;
+  });
+
+  // ── Analyze ────────────────────────────
+  analyzeBtn.addEventListener('click', async () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('photo', file);
+    formData.append('notes', document.getElementById('extra-notes').value);
+
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = 'Analyzing...';
+    statusBar.style.display = 'block';
+    results.style.display = 'none';
+
+    setStatus('s1', 'active');
+
+    try {
+      const resp = await fetch('/analyze', { method: 'POST', body: formData });
+      const data = await resp.json();
+
+      if (data.error) throw new Error(data.error);
+
+      setStatus('s1', 'done', `✓ Found: ${data.game_info.game_title}`);
+      setStatus('s2', 'done', `✓ Loose $${data.price_info.loose_price.toFixed(2)} | CIB $${data.price_info.cib_price.toFixed(2)}`);
+      setStatus('s3', 'done', `✓ Listing generated at $${data.listing.suggested_price}`);
+
+      currentData = data;
+      populateResults(data);
+
+      setTimeout(() => {
+        results.style.display = 'block';
+        results.scrollIntoView({ behavior: 'smooth' });
+      }, 400);
+
+    } catch (err) {
+      setStatus('s1', 'error', `✗ Error: ${err.message}`);
+    } finally {
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
+    }
+  });
+
+  function setStatus(id, state, text) {
+    const el = document.getElementById(id);
+    el.className = `status-line ${state}`;
+    const dot = el.querySelector('.dot');
+    dot.className = 'dot' + (state === 'active' ? ' pulse' : '');
+    if (text) el.innerHTML = `<span class="dot"></span> ${text}`;
+  }
+
+  function populateResults(data) {
+    const { game_info, price_info, listing } = data;
+
+    document.getElementById('r-game-title').textContent = game_info.game_title;
+    document.getElementById('r-platform').textContent = game_info.platform;
+    document.getElementById('r-year').textContent = game_info.year || '—';
+    document.getElementById('r-region').textContent = game_info.region || '—';
+
+    const includes = [
+      'Cartridge',
+      game_info.has_manual && 'Manual',
+      game_info.has_box && 'Box'
+    ].filter(Boolean).join(', ');
+    document.getElementById('r-includes').textContent = includes;
+    document.getElementById('r-condition-notes').textContent = game_info.condition_notes;
+    document.getElementById('r-publisher').textContent = game_info.publisher || '—';
+    document.getElementById('r-genre').textContent = game_info.genre || '—';
+    document.getElementById('r-rating').textContent = game_info.rating || '—';
+    document.getElementById('r-mpn').textContent = game_info.mpn || '—';
+
+    document.getElementById('r-loose-price').textContent =
+      price_info.loose_price ? `$${price_info.loose_price.toFixed(2)}` : 'N/A';
+    document.getElementById('r-cib-price').textContent =
+      price_info.cib_price ? `$${price_info.cib_price.toFixed(2)}` : 'N/A';
+    document.getElementById('r-suggested-price').textContent =
+      `$${listing.suggested_price.toFixed(2)}`;
+
+    editTitle.value = listing.title;
+    editTitle.dispatchEvent(new Event('input'));
+
+    editPrice.value = listing.suggested_price.toFixed(2);
+
+    document.getElementById('price-reasoning').textContent = listing.price_reasoning || '';
+
+    // Set condition button
+    document.querySelectorAll('.condition-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === listing.condition);
+    });
+    selectedCondition = listing.condition;
+  }
+
+  // ── Description preview ────────────────
+  document.getElementById('preview-desc-btn').addEventListener('click', () => {
+    if (!currentData) return;
+    document.getElementById('desc-preview-content').innerHTML =
+      currentData.listing.description;
+    document.getElementById('desc-modal').classList.add('open');
+  });
+
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('desc-modal').classList.remove('open');
+  });
+
+  // ── Publish ────────────────────────────
+  publishBtn.addEventListener('click', async () => {
+    if (!currentData) return;
+
+    const payload = {
+      game_info: currentData.game_info,
+      listing: {
+        ...currentData.listing,
+        title: editTitle.value,
+        suggested_price: parseFloat(editPrice.value),
+        condition: selectedCondition
+      }
+    };
+
+    publishBtn.disabled = true;
+    publishBtn.textContent = 'Publishing...';
+
+    try {
+      const resp = await fetch('/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await resp.json();
+
+      if (result.success) {
+        showToast(`✅ Listed! ID: ${result.listing_id}`);
+        publishBtn.textContent = '✓ Published!';
+      } else {
+        // No eBay token = show the listing details to copy-paste
+        showToast('📋 No eBay token — copy listing below');
+        publishBtn.textContent = '🚀 Publish to eBay';
+        publishBtn.disabled = false;
+        alert(`eBay not connected yet.\n\nTitle:\n${payload.listing.title}\n\nPrice: $${payload.listing.suggested_price}\n\nSet up your EBAY_TOKEN env var to publish directly!`);
+      }
+    } catch (err) {
+      showToast('✗ Error publishing');
+      publishBtn.textContent = '🚀 Publish to eBay';
+      publishBtn.disabled = false;
+    }
+  });
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 4000);
+  }
+
+  // ── Reset ──────────────────────────────
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    currentData = null;
+    results.style.display = 'none';
+    statusBar.style.display = 'none';
+    previewWrap.style.display = 'none';
+    dropZone.style.display = 'block';
+    photoInput.value = '';
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
+    document.getElementById('extra-notes').value = '';
+    document.querySelectorAll('#s1,#s2,#s3').forEach(el => {
+      el.className = 'status-line';
+      el.querySelector('.dot').className = 'dot';
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+</script>
+</body>
+</html>
