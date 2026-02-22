@@ -4,7 +4,7 @@ import time
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from google import genai
 from cerebras.cloud.sdk import Cerebras
 
@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024  # 64MB max (multi-image)
+app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024  # 160MB max (batch: 5 games x 4 photos x ~5MB)
 
 # Gemini client (vision only)
 gemini = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -32,6 +32,27 @@ EBAY_RETURN_POLICY = os.environ.get("EBAY_RETURN_POLICY", "")
 # ─────────────────────────────────────────
 #  Helpers
 # ─────────────────────────────────────────
+
+def _convert_heic_to_jpg(path: str) -> str:
+    """If path is a HEIC/HEIF file, convert to JPEG and return new path. Otherwise return as-is."""
+    if os.path.splitext(path)[1].lower() not in ('.heic', '.heif'):
+        return path
+    from PIL import Image
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    jpg_path = os.path.splitext(path)[0] + '.jpg'
+    img = Image.open(path)
+    img.save(jpg_path, 'JPEG', quality=92)
+    print(f"[heic] Converted {os.path.basename(path)} → {os.path.basename(jpg_path)}")
+    return jpg_path
+
+
+def _mime_for(path: str) -> str:
+    """Return MIME type based on file extension (handles HEIC from iPhone)."""
+    ext = os.path.splitext(path)[1].lower()
+    return {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".heic": "image/heic", ".heif": "image/heif", ".webp": "image/webp"}.get(ext, "image/jpeg")
+
 
 def upload_to_ebay_eps(image_path: str) -> str:
     """Upload image to eBay via Trading API UploadSiteHostedPictures, return ebayimg.com URL."""
@@ -64,7 +85,7 @@ def upload_to_ebay_eps(image_path: str) -> str:
         # Multipart: XML part + binary image part
         files = {
             "XML Payload": ("payload.xml", xml_body.encode("utf-8"), "text/xml"),
-            "image": (os.path.basename(image_path), image_data, "image/jpeg"),
+            "image": (os.path.basename(image_path), image_data, _mime_for(image_path)),
         }
         resp = requests.post(api_url, headers=headers, files=files, timeout=60)
 
@@ -182,7 +203,7 @@ Return ONLY valid JSON with no extra text:
   "price_reasoning": "one sentence why this price"
 }}
 
-Price 5-10% below market to sell quickly. Condition options: USED_LIKE_NEW, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE."""
+Price 5-10% below market to sell quickly. Condition options: NEW (sealed), LIKE_NEW, USED_EXCELLENT, USED_VERY_GOOD, USED_GOOD, USED_ACCEPTABLE."""
 
     response = cerebras.chat.completions.create(
         model=CEREBRAS_MODEL,
@@ -325,12 +346,13 @@ def analyze():
 
     extra_notes = request.form.get("notes", "")
 
-    # Save all uploaded files
+    # Save all uploaded files (convert HEIC→JPG for eBay compatibility)
     image_paths = []
     for i, photo in enumerate(photos):
         ext = Path(photo.filename).suffix or ".jpg"
         save_path = os.path.join(app.config["UPLOAD_FOLDER"], f"upload_{i}{ext}")
         photo.save(save_path)
+        save_path = _convert_heic_to_jpg(save_path)
         image_paths.append(save_path)
 
     try:
@@ -374,6 +396,84 @@ def publish():
 
     result = post_to_ebay(listing, game_info, image_urls=image_urls)
     return jsonify(result)
+
+
+@app.route("/analyze-batch", methods=["POST"])
+def analyze_batch():
+    """Analyze multiple games via SSE. Expects game_count, game_{n}_photos[], game_{n}_notes fields."""
+    game_count = int(request.form.get("game_count", 0))
+    if game_count < 1:
+        return jsonify({"error": "No games in batch"}), 400
+
+    # Pre-save ALL files before entering the generator (Flask request context closes after response starts)
+    batch_id = str(int(time.time() * 1000))
+    games_data = []
+    for g in range(game_count):
+        photos = request.files.getlist(f"game_{g}_photos")
+        notes = request.form.get(f"game_{g}_notes", "")
+        game_dir = os.path.join(app.config["UPLOAD_FOLDER"], batch_id, f"game_{g}")
+        os.makedirs(game_dir, exist_ok=True)
+        image_paths = []
+        for i, photo in enumerate(photos):
+            ext = Path(photo.filename).suffix or ".jpg"
+            save_path = os.path.join(game_dir, f"photo_{i}{ext}")
+            photo.save(save_path)
+            save_path = _convert_heic_to_jpg(save_path)
+            image_paths.append(save_path)
+        games_data.append({"image_paths": image_paths, "notes": notes})
+
+    def generate():
+        for g, gd in enumerate(games_data):
+            try:
+                # Step 1: Identify
+                yield f"data: {json.dumps({'type': 'progress', 'game': g, 'step': 'identifying'})}\n\n"
+                game_info = analyze_game_photo(gd["image_paths"][0])
+
+                # Step 2: Price
+                yield f"data: {json.dumps({'type': 'progress', 'game': g, 'step': 'pricing'})}\n\n"
+                price_info = get_market_price(game_info["game_title"], game_info["platform"])
+
+                # Step 3: Generate listing
+                yield f"data: {json.dumps({'type': 'progress', 'game': g, 'step': 'generating'})}\n\n"
+                listing = generate_listing(game_info, price_info, gd["notes"])
+
+                yield f"data: {json.dumps({'type': 'result', 'game': g, 'data': {'game_info': game_info, 'price_info': price_info, 'listing': listing, 'image_paths': gd['image_paths']}})}\n\n"
+
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'game': g, 'error': str(e)})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/publish-batch", methods=["POST"])
+def publish_batch():
+    """Publish multiple games sequentially. Expects JSON {games: [{listing, game_info, image_paths}, ...]}."""
+    data = request.json
+    games = data.get("games", [])
+    if not games:
+        return jsonify({"error": "No games to publish"}), 400
+
+    results = []
+    for i, game in enumerate(games):
+        listing = game.get("listing")
+        game_info = game.get("game_info")
+        image_paths = game.get("image_paths", [])
+
+        # Upload images to eBay EPS
+        image_urls = []
+        for path in image_paths:
+            if os.path.exists(path):
+                url = upload_to_ebay_eps(path)
+                if url:
+                    image_urls.append(url)
+
+        result = post_to_ebay(listing, game_info, image_urls=image_urls)
+        result["game_index"] = i
+        results.append(result)
+
+    return jsonify({"results": results})
 
 
 if __name__ == "__main__":
