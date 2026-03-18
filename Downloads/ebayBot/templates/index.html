@@ -523,12 +523,12 @@
     /* Condition selector */
     .condition-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
 
-    @media (min-width: 500px) {
-      .condition-grid { grid-template-columns: repeat(4, 1fr); }
+    @media (min-width: 600px) {
+      .condition-grid { grid-template-columns: repeat(6, 1fr); }
     }
 
     .condition-btn {
@@ -694,6 +694,275 @@
     }
 
     .reset-link:hover { color: var(--accent); }
+
+    /* ── Batch queue ─────────────────────── */
+    .btn-add-batch {
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px dashed var(--border);
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-add-batch:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn-add-batch:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #batch-queue {
+      display: none;
+      margin-top: 20px;
+    }
+
+    #batch-queue.has-items { display: block; }
+
+    .queue-header {
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: var(--green);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .queue-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .queue-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px 14px;
+    }
+
+    .queue-item-thumb {
+      width: 48px;
+      height: 48px;
+      border-radius: 3px;
+      object-fit: cover;
+      border: 1px solid var(--border);
+    }
+
+    .queue-item-info {
+      flex: 1;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .queue-item-info strong {
+      color: var(--text);
+      display: block;
+      margin-bottom: 2px;
+      font-size: 13px;
+    }
+
+    .queue-item-remove {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 28px;
+      height: 28px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .queue-item-remove:hover { border-color: #ff4444; color: #ff4444; }
+
+    .btn-analyze-batch {
+      width: 100%;
+      margin-top: 16px;
+      padding: 18px;
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+    }
+
+    .btn-analyze-batch:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
+    }
+
+    .btn-analyze-batch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Batch progress ──────────────────── */
+    #batch-progress {
+      display: none;
+      margin-top: 24px;
+    }
+
+    .batch-progress-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .batch-progress-row.active { border-color: var(--accent2); color: var(--accent2); }
+    .batch-progress-row.done { border-color: var(--green); color: var(--green); }
+    .batch-progress-row.error { border-color: #ff4444; color: #ff4444; }
+
+    .batch-progress-row .dot { flex-shrink: 0; }
+
+    .batch-progress-step {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    /* ── Batch results ───────────────────── */
+    #batch-results { display: none; }
+
+    .batch-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .batch-card.published { border-color: var(--green); }
+    .batch-card.publish-failed { border-color: #ff4444; }
+
+    .batch-card-summary {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .batch-card-summary:hover { background: rgba(255,255,255,0.02); }
+
+    .batch-card-checkbox {
+      width: 20px;
+      height: 20px;
+      accent-color: var(--green);
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .batch-card-thumb {
+      width: 48px;
+      height: 48px;
+      border-radius: 3px;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .batch-card-title {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .batch-card-title strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .batch-card-title small {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .batch-card-price {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 18px;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .batch-card-expand {
+      color: var(--muted);
+      font-size: 16px;
+      flex-shrink: 0;
+      transition: transform 0.2s;
+    }
+
+    .batch-card.open .batch-card-expand { transform: rotate(180deg); }
+
+    .batch-card-details {
+      display: none;
+      padding: 0 16px 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .batch-card.open .batch-card-details { display: block; }
+
+    .batch-card-details .game-meta { margin-top: 12px; }
+    .batch-card-details .field-group { margin-top: 12px; }
+
+    .batch-card-status {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      padding: 3px 8px;
+      border-radius: 2px;
+    }
+
+    .batch-card-status.success { background: var(--green); color: #000; }
+    .batch-card-status.failed { background: #ff4444; color: #fff; }
+
+    .btn-publish-batch {
+      width: 100%;
+      margin-top: 20px;
+      padding: 18px;
+      background: var(--green);
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-transform: uppercase;
+    }
+
+    .btn-publish-batch:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
+    }
+
+    .btn-publish-batch:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -710,7 +979,7 @@
     <div class="section-label">// 01 — Upload Photo</div>
 
     <div class="drop-zone" id="drop-zone">
-      <input type="file" id="photo-input" accept="image/*" multiple />
+      <input type="file" id="photo-input" accept="image/*,.heic,.heif" multiple />
       <span class="drop-icon">📷</span>
       <div class="drop-text">
         <strong>Drop photos here or tap to shoot</strong>
@@ -728,10 +997,37 @@
       ⚡ Analyze & Generate Listing
     </button>
 
+    <button class="btn-add-batch" id="add-batch-btn" disabled>
+      + Add to Batch
+    </button>
+
+    <div id="batch-queue">
+      <div class="queue-header">Batch Queue</div>
+      <div class="queue-list" id="queue-list"></div>
+      <button class="btn-analyze-batch" id="analyze-batch-btn">
+        ⚡ Analyze All (0 games)
+      </button>
+    </div>
+
     <div id="status-bar">
       <div class="status-line" id="s1"><span class="dot"></span> Identifying game...</div>
       <div class="status-line" id="s2"><span class="dot"></span> Checking market prices...</div>
       <div class="status-line" id="s3"><span class="dot"></span> Generating listing...</div>
+    </div>
+
+    <div id="batch-progress"></div>
+  </div>
+
+  <!-- Batch results -->
+  <div id="batch-results">
+    <hr class="divider" />
+    <div class="section-label">// 02 — Review & Edit All</div>
+    <div id="batch-cards"></div>
+    <button class="btn-publish-batch" id="publish-batch-btn">
+      Publish Selected (0)
+    </button>
+    <div style="text-align:center">
+      <span class="reset-link" id="batch-reset-btn">← Start new batch</span>
     </div>
   </div>
 
@@ -809,7 +1105,9 @@
       <div class="field-group">
         <div class="field-label">Condition</div>
         <div class="condition-grid" id="condition-grid">
-          <button class="condition-btn" data-val="USED_LIKE_NEW">Like New</button>
+          <button class="condition-btn" data-val="NEW">New / Sealed</button>
+          <button class="condition-btn" data-val="LIKE_NEW">Like New</button>
+          <button class="condition-btn" data-val="USED_EXCELLENT">Excellent</button>
           <button class="condition-btn" data-val="USED_VERY_GOOD">Very Good</button>
           <button class="condition-btn active" data-val="USED_GOOD">Good</button>
           <button class="condition-btn" data-val="USED_ACCEPTABLE">Acceptable</button>
@@ -861,11 +1159,23 @@
   let selectedCondition = 'USED_GOOD';
   let selectedFiles = [];  // Array of File objects
 
+  // Batch state
+  let batchQueue = [];    // Array of {files: File[], notes: string, thumbUrl: string}
+  let batchResults = [];  // Array of analysis results from SSE
+
   // ── Elements ───────────────────────────
   const photoInput = document.getElementById('photo-input');
   const dropZone = document.getElementById('drop-zone');
   const thumbStrip = document.getElementById('thumb-strip');
   const analyzeBtn = document.getElementById('analyze-btn');
+  const addBatchBtn = document.getElementById('add-batch-btn');
+  const batchQueueEl = document.getElementById('batch-queue');
+  const queueList = document.getElementById('queue-list');
+  const analyzeBatchBtn = document.getElementById('analyze-batch-btn');
+  const batchProgressEl = document.getElementById('batch-progress');
+  const batchResultsEl = document.getElementById('batch-results');
+  const batchCardsEl = document.getElementById('batch-cards');
+  const publishBatchBtn = document.getElementById('publish-batch-btn');
   const statusBar = document.getElementById('status-bar');
   const results = document.getElementById('results');
   const editTitle = document.getElementById('edit-title');
@@ -888,7 +1198,10 @@
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    addFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')));
+    // Accept image/* and also HEIC/HEIF which browsers may report with empty MIME
+    addFiles(Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name)
+    ));
   });
 
   function addFiles(files) {
@@ -896,6 +1209,7 @@
     selectedFiles = selectedFiles.concat(files);
     renderThumbs();
     analyzeBtn.disabled = false;
+    addBatchBtn.disabled = false;
   }
 
   function removeFile(index) {
@@ -903,6 +1217,7 @@
     renderThumbs();
     if (selectedFiles.length === 0) {
       analyzeBtn.disabled = true;
+      addBatchBtn.disabled = true;
     }
   }
 
@@ -1137,7 +1452,7 @@
     setTimeout(() => { toast.style.display = 'none'; }, 4000);
   }
 
-  // ── Reset ──────────────────────────────
+  // ── Reset (single game) ────────────────
   document.getElementById('reset-btn').addEventListener('click', () => {
     currentData = null;
     selectedFiles = [];
@@ -1148,6 +1463,7 @@
     dropZone.style.display = 'block';
     photoInput.value = '';
     analyzeBtn.disabled = true;
+    addBatchBtn.disabled = true;
     analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
     publishBtn.disabled = false;
     publishBtn.textContent = '🚀 Publish to eBay';
@@ -1156,6 +1472,385 @@
       el.className = 'status-line';
       el.querySelector('.dot').className = 'dot';
     });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // ── Batch: Add to Queue ───────────────
+  addBatchBtn.addEventListener('click', () => {
+    if (selectedFiles.length === 0) return;
+
+    // Create a thumbnail URL from the first file
+    const thumbUrl = URL.createObjectURL(selectedFiles[0]);
+    const notes = document.getElementById('extra-notes').value;
+
+    batchQueue.push({
+      files: [...selectedFiles],
+      notes: notes,
+      thumbUrl: thumbUrl
+    });
+
+    // Reset upload zone for next game
+    selectedFiles = [];
+    thumbStrip.innerHTML = '';
+    thumbStrip.classList.remove('has-items');
+    dropZone.style.display = 'block';
+    photoInput.value = '';
+    analyzeBtn.disabled = true;
+    addBatchBtn.disabled = true;
+    document.getElementById('extra-notes').value = '';
+
+    renderBatchQueue();
+  });
+
+  function renderBatchQueue() {
+    queueList.innerHTML = '';
+    if (batchQueue.length === 0) {
+      batchQueueEl.classList.remove('has-items');
+      return;
+    }
+    batchQueueEl.classList.add('has-items');
+
+    batchQueue.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = 'queue-item';
+      row.innerHTML = `
+        <img class="queue-item-thumb" src="${item.thumbUrl}" alt="Game ${i + 1}" />
+        <div class="queue-item-info">
+          <strong>Game ${i + 1}</strong>
+          ${item.files.length} photo${item.files.length > 1 ? 's' : ''}${item.notes ? ' · has notes' : ''}
+        </div>
+        <button class="queue-item-remove" data-idx="${i}">✕</button>
+      `;
+      queueList.appendChild(row);
+    });
+
+    // Remove handlers
+    queueList.querySelectorAll('.queue-item-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.dataset.idx);
+        URL.revokeObjectURL(batchQueue[idx].thumbUrl);
+        batchQueue.splice(idx, 1);
+        renderBatchQueue();
+      });
+    });
+
+    analyzeBatchBtn.textContent = `⚡ Analyze All (${batchQueue.length} game${batchQueue.length > 1 ? 's' : ''})`;
+  }
+
+  // ── Batch: Analyze All (SSE) ──────────
+  analyzeBatchBtn.addEventListener('click', async () => {
+    if (batchQueue.length === 0) return;
+
+    // If there are unsaved photos in the upload zone, add them to queue first
+    if (selectedFiles.length > 0) {
+      addBatchBtn.click();
+    }
+
+    const totalGames = batchQueue.length;
+
+    // Build FormData with all games
+    const formData = new FormData();
+    formData.append('game_count', totalGames);
+    for (let g = 0; g < totalGames; g++) {
+      batchQueue[g].files.forEach(f => formData.append(`game_${g}_photos`, f));
+      formData.append(`game_${g}_notes`, batchQueue[g].notes);
+    }
+
+    // Show progress UI
+    analyzeBatchBtn.disabled = true;
+    analyzeBatchBtn.textContent = 'Analyzing...';
+    batchProgressEl.style.display = 'block';
+    batchProgressEl.innerHTML = '';
+    batchResultsEl.style.display = 'none';
+    batchResults = [];
+
+    // Create progress rows
+    for (let g = 0; g < totalGames; g++) {
+      const row = document.createElement('div');
+      row.className = 'batch-progress-row';
+      row.id = `bp-${g}`;
+      row.innerHTML = `<span class="dot"></span> Game ${g + 1} — waiting...
+        <span class="batch-progress-step" id="bp-step-${g}"></span>`;
+      batchProgressEl.appendChild(row);
+    }
+
+    try {
+      const resp = await fetch('/analyze-batch', { method: 'POST', body: formData });
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const evt = JSON.parse(line.slice(6));
+
+          if (evt.type === 'progress') {
+            const row = document.getElementById(`bp-${evt.game}`);
+            row.className = 'batch-progress-row active';
+            row.querySelector('.dot').className = 'dot pulse';
+            const stepText = { identifying: 'Identifying...', pricing: 'Pricing...', generating: 'Generating...' };
+            document.getElementById(`bp-step-${evt.game}`).textContent = stepText[evt.step] || '';
+          }
+
+          if (evt.type === 'result') {
+            const row = document.getElementById(`bp-${evt.game}`);
+            const title = evt.data.game_info.game_title || 'Unknown';
+            row.className = 'batch-progress-row done';
+            row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — ${title}
+              <span class="batch-progress-step">✓</span>`;
+            batchResults[evt.game] = evt.data;
+          }
+
+          if (evt.type === 'error') {
+            const row = document.getElementById(`bp-${evt.game}`);
+            row.className = 'batch-progress-row error';
+            row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — Error: ${evt.error}
+              <span class="batch-progress-step">✗</span>`;
+          }
+
+          if (evt.type === 'done') {
+            renderBatchResults();
+          }
+        }
+      }
+    } catch (err) {
+      batchProgressEl.innerHTML += `<div class="batch-progress-row error"><span class="dot"></span> Batch error: ${err.message}</div>`;
+    }
+
+    analyzeBatchBtn.disabled = false;
+    analyzeBatchBtn.textContent = `⚡ Analyze All (${totalGames} game${totalGames > 1 ? 's' : ''})`;
+  });
+
+  // ── Batch: Render result cards ────────
+  function renderBatchResults() {
+    batchCardsEl.innerHTML = '';
+    if (batchResults.filter(Boolean).length === 0) return;
+    batchResultsEl.style.display = 'block';
+
+    batchResults.forEach((data, i) => {
+      if (!data) return;
+      const { game_info, price_info, listing } = data;
+      const card = document.createElement('div');
+      card.className = 'batch-card';
+      card.dataset.idx = i;
+
+      const thumbSrc = batchQueue[i] ? batchQueue[i].thumbUrl : '';
+
+      card.innerHTML = `
+        <div class="batch-card-summary">
+          <input type="checkbox" class="batch-card-checkbox" data-idx="${i}" checked />
+          <img class="batch-card-thumb" src="${thumbSrc}" alt="" />
+          <div class="batch-card-title">
+            <strong>${listing.title || game_info.game_title}</strong>
+            <small>${game_info.platform} · ${game_info.year || ''}</small>
+          </div>
+          <span class="batch-card-price">$${parseFloat(listing.suggested_price).toFixed(2)}</span>
+          <span class="batch-card-expand">▼</span>
+        </div>
+        <div class="batch-card-details">
+          <div class="game-meta">
+            <div class="meta-item"><div class="meta-label">Publisher</div><input type="text" class="meta-input" data-field="publisher" value="${game_info.publisher || ''}" /></div>
+            <div class="meta-item"><div class="meta-label">Genre</div><input type="text" class="meta-input" data-field="genre" value="${game_info.genre || ''}" /></div>
+            <div class="meta-item"><div class="meta-label">Rating</div><input type="text" class="meta-input" data-field="rating" value="${game_info.rating || ''}" /></div>
+            <div class="meta-item"><div class="meta-label">MPN</div><input type="text" class="meta-input" data-field="mpn" value="${game_info.mpn || ''}" /></div>
+            <div class="meta-item"><div class="meta-label">Region</div><input type="text" class="meta-input" data-field="region" value="${game_info.region || ''}" /></div>
+            <div class="meta-item"><div class="meta-label">Condition</div><input type="text" class="meta-input" data-field="condition_notes" value="${game_info.condition_notes || ''}" /></div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">eBay Title</div>
+            <input type="text" class="field-input" data-field="title" maxlength="80" value="${(listing.title || '').replace(/"/g, '&quot;')}" />
+          </div>
+          <div class="field-group">
+            <div class="field-label">Condition Grade</div>
+            <div class="condition-grid batch-condition-grid" data-idx="${i}">
+              <button class="condition-btn${listing.condition === 'NEW' ? ' active' : ''}" data-val="NEW">New / Sealed</button>
+              <button class="condition-btn${listing.condition === 'LIKE_NEW' ? ' active' : ''}" data-val="LIKE_NEW">Like New</button>
+              <button class="condition-btn${listing.condition === 'USED_EXCELLENT' ? ' active' : ''}" data-val="USED_EXCELLENT">Excellent</button>
+              <button class="condition-btn${listing.condition === 'USED_VERY_GOOD' ? ' active' : ''}" data-val="USED_VERY_GOOD">Very Good</button>
+              <button class="condition-btn${listing.condition === 'USED_GOOD' ? ' active' : ''}" data-val="USED_GOOD">Good</button>
+              <button class="condition-btn${listing.condition === 'USED_ACCEPTABLE' ? ' active' : ''}" data-val="USED_ACCEPTABLE">Acceptable</button>
+            </div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">Weight (oz)</div>
+            <input type="number" class="field-input" data-field="weight_oz" step="0.1" min="1" value="${game_info.has_box ? 12 : 4}" />
+          </div>
+          <div class="field-group">
+            <div class="field-label">Price (USD)</div>
+            <div class="price-input-wrap">
+              <span>$</span>
+              <input type="number" class="field-input" data-field="price" step="0.01" min="0.99" value="${parseFloat(listing.suggested_price).toFixed(2)}" style="padding-left:28px" />
+            </div>
+            <div class="char-count">${listing.price_reasoning || ''}</div>
+          </div>
+        </div>
+      `;
+      batchCardsEl.appendChild(card);
+    });
+
+    // Toggle expand/collapse
+    batchCardsEl.querySelectorAll('.batch-card-summary').forEach(summary => {
+      summary.addEventListener('click', (e) => {
+        if (e.target.classList.contains('batch-card-checkbox')) return; // don't toggle on checkbox click
+        const card = summary.closest('.batch-card');
+        card.classList.toggle('open');
+      });
+    });
+
+    // Condition buttons inside batch cards
+    batchCardsEl.querySelectorAll('.batch-condition-grid').forEach(grid => {
+      grid.addEventListener('click', (e) => {
+        const btn = e.target.closest('.condition-btn');
+        if (!btn) return;
+        grid.querySelectorAll('.condition-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+
+    updatePublishBatchCount();
+
+    // Checkbox changes update count
+    batchCardsEl.querySelectorAll('.batch-card-checkbox').forEach(cb => {
+      cb.addEventListener('change', updatePublishBatchCount);
+    });
+
+    setTimeout(() => {
+      batchResultsEl.scrollIntoView({ behavior: 'smooth' });
+    }, 200);
+  }
+
+  function updatePublishBatchCount() {
+    const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked').length;
+    publishBatchBtn.textContent = `Publish Selected (${checked})`;
+    publishBatchBtn.disabled = checked === 0;
+  }
+
+  // ── Batch: Publish Selected ───────────
+  publishBatchBtn.addEventListener('click', async () => {
+    const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked');
+    if (checked.length === 0) return;
+
+    publishBatchBtn.disabled = true;
+    publishBatchBtn.textContent = 'Publishing...';
+
+    const games = [];
+    checked.forEach(cb => {
+      const idx = parseInt(cb.dataset.idx);
+      const data = batchResults[idx];
+      if (!data) return;
+
+      const card = cb.closest('.batch-card');
+      const details = card.querySelector('.batch-card-details');
+
+      // Read edited fields from card
+      const getField = (name) => {
+        const input = details.querySelector(`[data-field="${name}"]`);
+        return input ? input.value : '';
+      };
+
+      const activeCondBtn = details.querySelector('.batch-condition-grid .condition-btn.active');
+      const condition = activeCondBtn ? activeCondBtn.dataset.val : data.listing.condition;
+
+      const editedGameInfo = {
+        ...data.game_info,
+        publisher: getField('publisher'),
+        genre: getField('genre'),
+        rating: getField('rating'),
+        mpn: getField('mpn'),
+        region: getField('region'),
+        condition_notes: getField('condition_notes'),
+      };
+
+      games.push({
+        game_info: editedGameInfo,
+        image_paths: data.image_paths,
+        listing: {
+          ...data.listing,
+          title: getField('title'),
+          suggested_price: parseFloat(getField('price')) || data.listing.suggested_price,
+          condition: condition,
+          weight_oz: parseFloat(getField('weight_oz')) || 8,
+        }
+      });
+    });
+
+    try {
+      const resp = await fetch('/publish-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ games })
+      });
+      const result = await resp.json();
+
+      // Update card statuses
+      let successCount = 0;
+      result.results.forEach((r, ri) => {
+        // Find the card matching this game
+        const checkboxes = Array.from(checked);
+        if (ri >= checkboxes.length) return;
+        const card = checkboxes[ri].closest('.batch-card');
+        const summary = card.querySelector('.batch-card-summary');
+
+        if (r.success) {
+          card.classList.add('published');
+          const badge = document.createElement('span');
+          badge.className = 'batch-card-status success';
+          badge.textContent = `Listed #${r.listing_id}`;
+          summary.appendChild(badge);
+          successCount++;
+        } else {
+          card.classList.add('publish-failed');
+          const badge = document.createElement('span');
+          badge.className = 'batch-card-status failed';
+          badge.textContent = 'Failed';
+          summary.appendChild(badge);
+        }
+      });
+
+      showToast(`Published ${successCount}/${result.results.length} games`);
+      publishBatchBtn.textContent = `✓ Published ${successCount}/${result.results.length}`;
+    } catch (err) {
+      showToast('Batch publish error');
+      publishBatchBtn.textContent = 'Publish Selected';
+      publishBatchBtn.disabled = false;
+    }
+  });
+
+  // ── Batch: Reset ──────────────────────
+  document.getElementById('batch-reset-btn').addEventListener('click', () => {
+    batchQueue.forEach(item => URL.revokeObjectURL(item.thumbUrl));
+    batchQueue = [];
+    batchResults = [];
+    batchQueueEl.classList.remove('has-items');
+    batchProgressEl.style.display = 'none';
+    batchProgressEl.innerHTML = '';
+    batchResultsEl.style.display = 'none';
+    batchCardsEl.innerHTML = '';
+    renderBatchQueue();
+
+    // Reset upload zone
+    currentData = null;
+    selectedFiles = [];
+    results.style.display = 'none';
+    statusBar.style.display = 'none';
+    thumbStrip.innerHTML = '';
+    thumbStrip.classList.remove('has-items');
+    dropZone.style.display = 'block';
+    photoInput.value = '';
+    analyzeBtn.disabled = true;
+    addBatchBtn.disabled = true;
+    document.getElementById('extra-notes').value = '';
+    publishBatchBtn.disabled = false;
+    publishBatchBtn.textContent = 'Publish Selected (0)';
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 </script>

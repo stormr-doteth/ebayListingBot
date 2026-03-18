@@ -52,6 +52,8 @@ curl -s -H "Authorization: Bearer $EBAY_TOKEN" \
 | `/` | GET | Serves the main UI |
 | `/analyze` | POST | Accepts multipart photos + notes, runs full agent pipeline, returns JSON |
 | `/publish` | POST | Accepts JSON listing data, uploads images to eBay, posts listing, returns result |
+| `/analyze-batch` | POST | Accepts multi-game FormData (`game_count`, `game_{n}_photos[]`, `game_{n}_notes`), returns SSE stream with per-game progress/result events |
+| `/publish-batch` | POST | Accepts JSON `{games: [{listing, game_info, image_paths}]}`, publishes sequentially, returns `{results: [...]}` |
 
 ## Agent Pipeline (in app.py)
 1. **`analyze_game_photo(image_path)`** — sends image to Gemini Vision, returns structured game info (title, platform, year, region, condition, has_box, has_manual, publisher, genre, rating, mpn)
@@ -85,6 +87,9 @@ eBay category ID `139973` = Video Games (used for all retro game listings).
 - Editable title (80 char limit with counter), price, and condition grade before publishing
 - Description preview modal shows rendered HTML before posting
 - If no EBAY_TOKEN, publish falls back to showing copy-pasteable listing data
+- **Batch mode**: "Add to Batch" queues games with their photos, "Analyze All" runs SSE pipeline for all games, cards render in a scrollable list with checkboxes for selective publishing
+- Single-game fast path preserved: if you never click "Add to Batch", the existing analyze button works exactly as before
+- Batch images stored at `uploads/{batch_id}/game_{n}/photo_{i}.ext` to avoid collisions
 
 ## Design System
 - Background: `#0a0a0f`, Surface: `#13131a`, Accent: `#ff6b2b` (orange), Green: `#39ff14`
