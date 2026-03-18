@@ -1,18 +1,33 @@
 import os
 import json
 import time
+import functools
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, Response
-from google import genai
-from cerebras.cloud.sdk import Cerebras
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 
 load_dotenv(Path(__file__).parent / ".env")
+
+from google import genai
+from cerebras.cloud.sdk import Cerebras
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 160 * 1024 * 1024  # 160MB max (batch: 5 games x 4 photos x ~5MB)
+app.secret_key = os.environ.get("SECRET_KEY", os.urandom(32).hex())
+
+# PIN-based authentication
+APP_PIN = os.environ.get("APP_PIN", "")
+
+def require_pin(f):
+    """Decorator: redirect to login if not authenticated."""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if APP_PIN and not session.get("authenticated"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
 
 # Gemini client (vision only)
 gemini = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -333,12 +348,26 @@ def post_to_ebay(listing: dict, game_info: dict, image_urls: list = None) -> dic
 #  Routes
 # ─────────────────────────────────────────
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not APP_PIN:
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        if request.form.get("pin") == APP_PIN:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        return render_template("login.html", error="Wrong PIN")
+    return render_template("login.html", error=None)
+
+
 @app.route("/")
+@require_pin
 def index():
     return render_template("index.html")
 
 
 @app.route("/analyze", methods=["POST"])
+@require_pin
 def analyze():
     photos = request.files.getlist("photos")
     if not photos or not photos[0].filename:
@@ -377,6 +406,7 @@ def analyze():
 
 
 @app.route("/publish", methods=["POST"])
+@require_pin
 def publish():
     data = request.json
     listing = data.get("listing")
@@ -399,6 +429,7 @@ def publish():
 
 
 @app.route("/analyze-batch", methods=["POST"])
+@require_pin
 def analyze_batch():
     """Analyze multiple games via SSE. Expects game_count, game_{n}_photos[], game_{n}_notes fields."""
     game_count = int(request.form.get("game_count", 0))
@@ -448,6 +479,7 @@ def analyze_batch():
 
 
 @app.route("/publish-batch", methods=["POST"])
+@require_pin
 def publish_batch():
     """Publish multiple games sequentially. Expects JSON {games: [{listing, game_info, image_paths}, ...]}."""
     data = request.json
@@ -476,8 +508,9 @@ def publish_batch():
     return jsonify({"results": results})
 
 
+os.makedirs("uploads", exist_ok=True)
+
 if __name__ == "__main__":
-    os.makedirs("uploads", exist_ok=True)
     # Debug: confirm env vars loaded
     print(f"[startup] EBAY_SANDBOX = {EBAY_SANDBOX}")
     print(f"[startup] EBAY_BASE_URL = {EBAY_BASE_URL}")
