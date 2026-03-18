@@ -1128,6 +1128,11 @@
         </div>
         <div class="char-count" id="price-reasoning">—</div>
       </div>
+
+      <div class="field-group">
+        <div class="field-label">Description <span style="color:var(--muted);font-size:0.7rem">(HTML)</span></div>
+        <textarea class="field-input" id="edit-description" rows="5" style="resize:vertical;min-height:80px;font-size:0.75rem;line-height:1.4"></textarea>
+      </div>
     </div>
 
     <!-- Actions -->
@@ -1359,6 +1364,7 @@
       `$${listing.suggested_price.toFixed(2)}`;
 
     editTitle.value = listing.title;
+    document.getElementById('edit-description').value = listing.description;
     editTitle.dispatchEvent(new Event('input'));
 
     editPrice.value = listing.suggested_price.toFixed(2);
@@ -1380,7 +1386,7 @@
   document.getElementById('preview-desc-btn').addEventListener('click', () => {
     if (!currentData) return;
     document.getElementById('desc-preview-content').innerHTML =
-      currentData.listing.description;
+      document.getElementById('edit-description').value;
     document.getElementById('desc-modal').classList.add('open');
   });
 
@@ -1412,6 +1418,7 @@
       listing: {
         ...currentData.listing,
         title: editTitle.value,
+        description: document.getElementById('edit-description').value,
         suggested_price: parseFloat(editPrice.value),
         condition: selectedCondition,
         weight_oz: parseFloat(document.getElementById('edit-weight').value) || 8
