@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import base64
 import functools
 import requests
 from pathlib import Path
@@ -37,12 +38,101 @@ GEMINI_MODEL = "gemini-3-flash-preview"
 cerebras = Cerebras(api_key=os.environ.get("CEREBRAS_API_KEY"))
 CEREBRAS_MODEL = "llama3.1-8b"
 
-EBAY_TOKEN = os.environ.get("EBAY_TOKEN", "YOUR_EBAY_TOKEN_HERE")
 EBAY_SANDBOX = os.environ.get("EBAY_SANDBOX", "false").lower() == "true"
 EBAY_BASE_URL = "https://api.sandbox.ebay.com" if EBAY_SANDBOX else "https://api.ebay.com"
+EBAY_AUTH_URL = "https://auth.sandbox.ebay.com" if EBAY_SANDBOX else "https://auth.ebay.com"
 EBAY_FULFILLMENT_POLICY = os.environ.get("EBAY_FULFILLMENT_POLICY", "")
 EBAY_PAYMENT_POLICY = os.environ.get("EBAY_PAYMENT_POLICY", "")
 EBAY_RETURN_POLICY = os.environ.get("EBAY_RETURN_POLICY", "")
+
+# OAuth2 credentials (from eBay Developer dashboard)
+EBAY_APP_ID = os.environ.get("EBAY_APP_ID", "")        # Client ID
+EBAY_CERT_ID = os.environ.get("EBAY_CERT_ID", "")      # Client Secret
+EBAY_REDIRECT_URI = os.environ.get("EBAY_REDIRECT_URI", "")  # RuName
+
+# OAuth2 scopes needed for Inventory + Trading APIs
+EBAY_SCOPES = [
+    "https://api.ebay.com/oauth/api_scope",
+    "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    "https://api.ebay.com/oauth/api_scope/sell.account",
+    "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+    "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
+]
+
+# Token file path (persists across restarts)
+EBAY_TOKEN_FILE = Path(__file__).parent / "ebay_tokens.json"
+
+# Legacy fallback: static token from .env (used if OAuth not configured)
+EBAY_TOKEN_LEGACY = os.environ.get("EBAY_TOKEN", "YOUR_EBAY_TOKEN_HERE")
+
+
+def _load_token_data() -> dict:
+    """Load saved OAuth tokens from disk."""
+    if EBAY_TOKEN_FILE.exists():
+        try:
+            return json.loads(EBAY_TOKEN_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_token_data(data: dict):
+    """Persist OAuth tokens to disk."""
+    EBAY_TOKEN_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _refresh_access_token(refresh_token: str) -> dict:
+    """Exchange a refresh token for a new access token. Returns updated token data."""
+    token_url = f"{EBAY_BASE_URL}/identity/v1/oauth2/token"
+    credentials = base64.b64encode(f"{EBAY_APP_ID}:{EBAY_CERT_ID}".encode()).decode()
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {credentials}",
+    }
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": " ".join(EBAY_SCOPES),
+    }
+    resp = requests.post(token_url, headers=headers, data=body, timeout=15)
+    resp.raise_for_status()
+    token_resp = resp.json()
+
+    token_data = _load_token_data()
+    token_data["access_token"] = token_resp["access_token"]
+    token_data["expires_at"] = time.time() + token_resp.get("expires_in", 7200) - 300  # 5 min buffer
+    # refresh_token may be returned (rotated) or not
+    if "refresh_token" in token_resp:
+        token_data["refresh_token"] = token_resp["refresh_token"]
+        token_data["refresh_expires_at"] = time.time() + token_resp.get("refresh_token_expires_in", 47304000)
+    _save_token_data(token_data)
+    print(f"[oauth] Access token refreshed, expires in {token_resp.get('expires_in', '?')}s")
+    return token_data
+
+
+def get_ebay_token() -> str:
+    """Get a valid eBay access token. Auto-refreshes if expired. Falls back to legacy .env token."""
+    token_data = _load_token_data()
+
+    if token_data.get("access_token"):
+        # Check if token is still valid (with 5 min buffer already baked into expires_at)
+        if time.time() < token_data.get("expires_at", 0):
+            return token_data["access_token"]
+
+        # Token expired — try to refresh
+        refresh_token = token_data.get("refresh_token")
+        if refresh_token and EBAY_APP_ID and EBAY_CERT_ID:
+            try:
+                token_data = _refresh_access_token(refresh_token)
+                return token_data["access_token"]
+            except Exception as e:
+                print(f"[oauth] Refresh failed: {e}")
+
+    # Fallback to legacy static token from .env
+    if EBAY_TOKEN_LEGACY and EBAY_TOKEN_LEGACY != "YOUR_EBAY_TOKEN_HERE":
+        return EBAY_TOKEN_LEGACY
+
+    return ""
 
 # ─────────────────────────────────────────
 #  Helpers
@@ -71,8 +161,8 @@ def _mime_for(path: str) -> str:
 
 def upload_to_ebay_eps(image_path: str) -> str:
     """Upload image to eBay via Trading API UploadSiteHostedPictures, return ebayimg.com URL."""
-    token = os.environ.get("EBAY_TOKEN", "")
-    if not token or token == "YOUR_EBAY_TOKEN_HERE":
+    token = get_ebay_token()
+    if not token:
         return ""
 
     # Trading API endpoint (production)
@@ -229,10 +319,10 @@ Price 5-10% below market to sell quickly. Condition options: NEW (sealed), LIKE_
 
 def post_to_ebay(listing: dict, game_info: dict, image_urls: list = None) -> dict:
     """Post the listing to eBay via Inventory API."""
-    token = os.environ.get("EBAY_TOKEN", "")
-    print(f"[publish] Token loaded = {bool(token and token != 'YOUR_EBAY_TOKEN_HERE')}")
-    if not token or token == "YOUR_EBAY_TOKEN_HERE":
-        return {"success": False, "error": "No eBay token configured", "listing_id": None}
+    token = get_ebay_token()
+    print(f"[publish] Token loaded = {bool(token)}")
+    if not token:
+        return {"success": False, "error": "No eBay token configured. Connect eBay from the app.", "listing_id": None}
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -358,6 +448,110 @@ def login():
             return redirect(url_for("index"))
         return render_template("login.html", error="Wrong PIN")
     return render_template("login.html", error=None)
+
+
+@app.route("/ebay/auth")
+@require_pin
+def ebay_auth():
+    """Start eBay OAuth2 flow — redirect user to eBay consent page."""
+    if not EBAY_APP_ID or not EBAY_REDIRECT_URI:
+        return jsonify({"error": "EBAY_APP_ID and EBAY_REDIRECT_URI must be set in .env"}), 500
+
+    scope = " ".join(EBAY_SCOPES)
+    auth_url = (
+        f"{EBAY_AUTH_URL}/oauth2/authorize"
+        f"?client_id={EBAY_APP_ID}"
+        f"&response_type=code"
+        f"&redirect_uri={EBAY_REDIRECT_URI}"
+        f"&scope={requests.utils.quote(scope)}"
+    )
+    return redirect(auth_url)
+
+
+@app.route("/ebay/callback")
+@require_pin
+def ebay_callback():
+    """Handle eBay OAuth2 redirect — exchange auth code for tokens."""
+    code = request.args.get("code")
+    if not code:
+        error = request.args.get("error_description", "Authorization denied or failed")
+        return f"<h2>eBay Auth Error</h2><p>{error}</p><a href='/'>Back to app</a>", 400
+
+    # Exchange authorization code for access + refresh tokens
+    token_url = f"{EBAY_BASE_URL}/identity/v1/oauth2/token"
+    credentials = base64.b64encode(f"{EBAY_APP_ID}:{EBAY_CERT_ID}".encode()).decode()
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {credentials}",
+    }
+    body = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": EBAY_REDIRECT_URI,
+    }
+
+    try:
+        resp = requests.post(token_url, headers=headers, data=body, timeout=15)
+        resp.raise_for_status()
+        token_resp = resp.json()
+    except Exception as e:
+        return f"<h2>Token Exchange Failed</h2><pre>{e}</pre><a href='/'>Back to app</a>", 500
+
+    # Save tokens to disk
+    token_data = {
+        "access_token": token_resp["access_token"],
+        "expires_at": time.time() + token_resp.get("expires_in", 7200) - 300,
+        "refresh_token": token_resp.get("refresh_token", ""),
+        "refresh_expires_at": time.time() + token_resp.get("refresh_token_expires_in", 47304000),
+        "token_type": token_resp.get("token_type", "User Access Token"),
+        "connected_at": time.time(),
+    }
+    _save_token_data(token_data)
+    print(f"[oauth] eBay connected! Access token expires in {token_resp.get('expires_in', '?')}s, "
+          f"refresh token expires in {token_resp.get('refresh_token_expires_in', '?')}s")
+
+    return redirect(url_for("index"))
+
+
+@app.route("/ebay/status")
+@require_pin
+def ebay_status():
+    """Return current eBay connection status as JSON."""
+    token_data = _load_token_data()
+
+    if token_data.get("access_token"):
+        refresh_expires = token_data.get("refresh_expires_at", 0)
+        connected = True
+        # Check if refresh token is still valid
+        if refresh_expires and time.time() > refresh_expires:
+            connected = False
+            status = "expired"
+        elif time.time() > token_data.get("expires_at", 0):
+            status = "needs_refresh"  # will auto-refresh on next API call
+        else:
+            status = "active"
+        return jsonify({
+            "connected": connected,
+            "status": status,
+            "oauth_configured": bool(EBAY_APP_ID and EBAY_CERT_ID and EBAY_REDIRECT_URI),
+        })
+
+    # Check legacy token
+    has_legacy = EBAY_TOKEN_LEGACY and EBAY_TOKEN_LEGACY != "YOUR_EBAY_TOKEN_HERE"
+    return jsonify({
+        "connected": has_legacy,
+        "status": "legacy" if has_legacy else "disconnected",
+        "oauth_configured": bool(EBAY_APP_ID and EBAY_CERT_ID and EBAY_REDIRECT_URI),
+    })
+
+
+@app.route("/ebay/disconnect", methods=["POST"])
+@require_pin
+def ebay_disconnect():
+    """Clear saved OAuth tokens."""
+    if EBAY_TOKEN_FILE.exists():
+        EBAY_TOKEN_FILE.unlink()
+    return jsonify({"success": True})
 
 
 @app.route("/")
@@ -514,6 +708,13 @@ if __name__ == "__main__":
     # Debug: confirm env vars loaded
     print(f"[startup] EBAY_SANDBOX = {EBAY_SANDBOX}")
     print(f"[startup] EBAY_BASE_URL = {EBAY_BASE_URL}")
-    print(f"[startup] EBAY_TOKEN set = {EBAY_TOKEN not in (None, '', 'YOUR_EBAY_TOKEN_HERE')}")
-    print(f"[startup] EBAY_TOKEN first 20 chars = {EBAY_TOKEN[:20] if EBAY_TOKEN else 'EMPTY'}...")
+    print(f"[startup] EBAY_APP_ID set = {bool(EBAY_APP_ID)}")
+    print(f"[startup] EBAY_REDIRECT_URI = {EBAY_REDIRECT_URI or '(not set)'}")
+    token = get_ebay_token()
+    print(f"[startup] eBay token available = {bool(token)}")
+    token_data = _load_token_data()
+    if token_data.get("access_token"):
+        print(f"[startup] OAuth tokens on disk, refresh expires = {time.ctime(token_data.get('refresh_expires_at', 0))}")
+    elif EBAY_TOKEN_LEGACY and EBAY_TOKEN_LEGACY != "YOUR_EBAY_TOKEN_HERE":
+        print(f"[startup] Using legacy EBAY_TOKEN from .env")
     app.run(host="0.0.0.0", port=8080, debug=True)

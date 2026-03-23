@@ -28,7 +28,10 @@ ebayBot/
 ## Environment Variables (in `.env`)
 ```bash
 GEMINI_API_KEY=AIza...                 # Required (free from aistudio.google.com)
-EBAY_TOKEN=v^1.1-...                   # Required for publishing to eBay
+EBAY_APP_ID=StormRic-listingB-PRD-... # Required for OAuth (Client ID from eBay Developer)
+EBAY_CERT_ID=PRD-...                  # Required for OAuth (Client Secret from eBay Developer)
+EBAY_REDIRECT_URI=Storm_Ricciotti-... # Required for OAuth (RuName from eBay Developer)
+EBAY_TOKEN=v^1.1-...                   # Legacy fallback (optional if OAuth configured)
 EBAY_SANDBOX=false                     # Set to "true" to use sandbox API
 EBAY_FULFILLMENT_POLICY=255223329024   # eBay business policy ID (USPS Ground Advantage - Calculated)
 EBAY_PAYMENT_POLICY=255223242024       # eBay business policy ID
@@ -54,6 +57,10 @@ curl -s -H "Authorization: Bearer $EBAY_TOKEN" \
 | `/publish` | POST | Accepts JSON listing data, uploads images to eBay, posts listing, returns result |
 | `/analyze-batch` | POST | Accepts multi-game FormData (`game_count`, `game_{n}_photos[]`, `game_{n}_notes`), returns SSE stream with per-game progress/result events |
 | `/publish-batch` | POST | Accepts JSON `{games: [{listing, game_info, image_paths}]}`, publishes sequentially, returns `{results: [...]}` |
+| `/ebay/auth` | GET | Starts OAuth2 flow — redirects to eBay consent page |
+| `/ebay/callback` | GET | Handles eBay redirect, exchanges auth code for tokens |
+| `/ebay/status` | GET | Returns JSON with current eBay connection status |
+| `/ebay/disconnect` | POST | Clears saved OAuth tokens |
 
 ## Agent Pipeline (in app.py)
 1. **`analyze_game_photo(image_path)`** — sends image to Gemini Vision, returns structured game info (title, platform, year, region, condition, has_box, has_manual, publisher, genre, rating, mpn)
@@ -61,6 +68,19 @@ curl -s -H "Authorization: Bearer $EBAY_TOKEN" \
 3. **`generate_listing(game_info, price_info, extra_notes)`** — prompts Cerebras (Llama 3.1 8B) to write optimized eBay title, HTML description, condition grade, and suggested price
 4. **`upload_to_ebay_eps(image_path)`** — uploads image to eBay via Trading API `UploadSiteHostedPictures`, returns `ebayimg.com` URL
 5. **`post_to_ebay(listing, game_info, image_urls)`** — creates eBay inventory item (with item specifics/aspects + image URLs) → creates offer → publishes listing
+
+## eBay OAuth2 Flow
+The app supports automatic token refresh via OAuth2 Authorization Code Grant:
+1. User clicks "Connect eBay" → redirected to `auth.ebay.com/oauth2/authorize` with scopes
+2. User consents → eBay redirects to `/ebay/callback` with authorization code
+3. App exchanges code for **access token** (2h) + **refresh token** (18 months)
+4. Tokens saved to `ebay_tokens.json` (gitignored)
+5. `get_ebay_token()` auto-refreshes access token when expired using refresh token
+6. Falls back to legacy `EBAY_TOKEN` from `.env` if OAuth not configured
+
+**eBay Developer Dashboard setup:**
+- Set "Your auth accepted URL" to `https://ebaylistingbot-production.up.railway.app/ebay/callback`
+- RuName is the `EBAY_REDIRECT_URI` value
 
 ## eBay API Flow
 Uses the modern eBay Inventory REST API + legacy Trading API for image uploads:
@@ -98,7 +118,7 @@ eBay category ID `139973` = Video Games (used for all retro game listings).
 - No CSS framework — all custom styles in `<style>` block in index.html
 
 ## Current Limitations / Known TODOs
-- [ ] eBay OAuth token requires manual refresh (no auto-refresh flow yet)
+- [x] ~~eBay OAuth token requires manual refresh~~ — OAuth2 auto-refresh implemented
 - [ ] PriceCharting API key not configured (works without it, prices less accurate)
 - [ ] Uploads folder not cleaned up automatically
 - [ ] No authentication on the web UI (fine for local/Tailscale use, not for public internet)

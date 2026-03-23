@@ -963,6 +963,70 @@
     }
 
     .btn-publish-batch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* eBay connection status */
+    .ebay-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 6px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .ebay-status:hover {
+      border-color: var(--accent);
+    }
+
+    .ebay-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .ebay-dot.connected { background: var(--green); }
+    .ebay-dot.legacy { background: var(--accent2); }
+    .ebay-dot.disconnected { background: #ff4444; }
+
+    .ebay-status-text { color: var(--muted); }
+
+    .ebay-actions {
+      display: none;
+      margin-top: 8px;
+      gap: 8px;
+    }
+
+    .ebay-actions.show { display: flex; }
+
+    .ebay-actions button {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 12px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .ebay-actions button:hover {
+      border-color: var(--accent);
+    }
+
+    .ebay-actions .btn-connect {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #000;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -972,6 +1036,14 @@
     <div class="header-tag">// retro game lister v1.2</div>
     <h1>Retro<span>List</span></h1>
     <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude.</p>
+    <div class="ebay-status" id="ebay-status" onclick="toggleEbayActions()">
+      <span class="ebay-dot disconnected" id="ebay-dot"></span>
+      <span class="ebay-status-text" id="ebay-status-text">Checking eBay...</span>
+    </div>
+    <div class="ebay-actions" id="ebay-actions">
+      <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'">Connect eBay</button>
+      <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none;">Disconnect</button>
+    </div>
   </header>
 
   <!-- Upload section -->
@@ -1159,6 +1231,62 @@
 <div id="toast">✅ Listed on eBay!</div>
 
 <script>
+  // ── eBay Connection ─────────────────────
+  async function checkEbayStatus() {
+    try {
+      const resp = await fetch('/ebay/status');
+      const data = await resp.json();
+      const dot = document.getElementById('ebay-dot');
+      const text = document.getElementById('ebay-status-text');
+      const connectBtn = document.getElementById('ebay-connect-btn');
+      const disconnectBtn = document.getElementById('ebay-disconnect-btn');
+
+      dot.className = 'ebay-dot';
+      if (data.status === 'active' || data.status === 'needs_refresh') {
+        dot.classList.add('connected');
+        text.textContent = 'eBay Connected';
+        connectBtn.style.display = 'none';
+        disconnectBtn.style.display = '';
+      } else if (data.status === 'legacy') {
+        dot.classList.add('legacy');
+        text.textContent = 'eBay Token (manual)';
+        if (data.oauth_configured) {
+          connectBtn.style.display = '';
+          connectBtn.textContent = 'Upgrade to OAuth';
+        } else {
+          connectBtn.style.display = 'none';
+        }
+        disconnectBtn.style.display = 'none';
+      } else if (data.status === 'expired') {
+        dot.classList.add('disconnected');
+        text.textContent = 'eBay Expired — Reconnect';
+        connectBtn.style.display = '';
+        disconnectBtn.style.display = 'none';
+      } else {
+        dot.classList.add('disconnected');
+        text.textContent = data.oauth_configured ? 'eBay Disconnected' : 'eBay Not Configured';
+        connectBtn.style.display = data.oauth_configured ? '' : 'none';
+        disconnectBtn.style.display = 'none';
+      }
+    } catch (e) {
+      console.error('eBay status check failed:', e);
+    }
+  }
+
+  function toggleEbayActions() {
+    document.getElementById('ebay-actions').classList.toggle('show');
+  }
+
+  async function disconnectEbay() {
+    if (!confirm('Disconnect eBay? You will need to re-authorize.')) return;
+    await fetch('/ebay/disconnect', { method: 'POST' });
+    checkEbayStatus();
+    document.getElementById('ebay-actions').classList.remove('show');
+  }
+
+  // Check on load
+  checkEbayStatus();
+
   // ── State ──────────────────────────────
   let currentData = null;
   let selectedCondition = 'USED_GOOD';
