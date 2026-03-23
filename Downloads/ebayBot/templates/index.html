@@ -997,36 +997,6 @@
 
     .ebay-status-text { color: var(--muted); }
 
-    .ebay-actions {
-      display: none;
-      margin-top: 8px;
-      gap: 8px;
-    }
-
-    .ebay-actions.show { display: flex; }
-
-    .ebay-actions button {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      padding: 4px 12px;
-      border-radius: 3px;
-      border: 1px solid var(--border);
-      background: var(--surface2);
-      color: var(--text);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .ebay-actions button:hover {
-      border-color: var(--accent);
-    }
-
-    .ebay-actions .btn-connect {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #000;
-      font-weight: 700;
-    }
   </style>
 </head>
 <body>
@@ -1036,13 +1006,13 @@
     <div class="header-tag">// retro game lister v1.2</div>
     <h1>Retro<span>List</span></h1>
     <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude.</p>
-    <div class="ebay-status" id="ebay-status" onclick="toggleEbayActions()">
-      <span class="ebay-dot disconnected" id="ebay-dot"></span>
-      <span class="ebay-status-text" id="ebay-status-text">Checking eBay...</span>
-    </div>
-    <div class="ebay-actions" id="ebay-actions">
-      <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'">Connect eBay</button>
-      <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none;">Disconnect</button>
+    <div class="ebay-status-row" style="display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap;">
+      <div class="ebay-status" id="ebay-status">
+        <span class="ebay-dot disconnected" id="ebay-dot"></span>
+        <span class="ebay-status-text" id="ebay-status-text">Checking eBay...</span>
+      </div>
+      <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:var(--accent); color:#000; font-weight:700; cursor:pointer;">Connect eBay</button>
+      <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">Disconnect</button>
     </div>
   </header>
 
@@ -1273,15 +1243,10 @@
     }
   }
 
-  function toggleEbayActions() {
-    document.getElementById('ebay-actions').classList.toggle('show');
-  }
-
   async function disconnectEbay() {
     if (!confirm('Disconnect eBay? You will need to re-authorize.')) return;
     await fetch('/ebay/disconnect', { method: 'POST' });
     checkEbayStatus();
-    document.getElementById('ebay-actions').classList.remove('show');
   }
 
   // Check on load
