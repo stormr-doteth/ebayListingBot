@@ -1,8 +1,11 @@
 import os
+import csv
 import json
 import time
 import base64
+import difflib
 import functools
+import re
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
@@ -64,6 +67,92 @@ EBAY_TOKEN_FILE = Path(__file__).parent / "ebay_tokens.json"
 
 # Legacy fallback: static token from .env (used if OAuth not configured)
 EBAY_TOKEN_LEGACY = os.environ.get("EBAY_TOKEN", "YOUR_EBAY_TOKEN_HERE")
+
+# ── CSV Price Database ────────────────────────────────────────────────────────
+# Map Gemini's full platform names → CSV abbreviations
+PLATFORM_TO_CSV = {
+    "nintendo 64": "N64", "n64": "N64",
+    "super nintendo": "SNES", "super nes": "SNES", "snes": "SNES",
+    "nintendo entertainment system": "NES", "nes": "NES",
+    "game boy": "GameBoy", "gameboy": "GameBoy",
+    "game boy color": "GameBoy Color", "gameboy color": "GameBoy Color",
+    "game boy advance": "GameBoy Advance", "gameboy advance": "GameBoy Advance", "gba": "GameBoy Advance",
+    "gamecube": "GameCube", "nintendo gamecube": "GameCube",
+    "nintendo ds": "Nintendo DS", "ds": "Nintendo DS",
+    "wii": "Wii", "nintendo wii": "Wii",
+}
+
+
+def _normalize_title(title: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace for fuzzy matching."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", title.lower())).strip()
+
+
+def _load_csv_prices() -> tuple[dict, dict]:
+    """Load CSV into a lookup dict keyed by (csv_platform, normalized_title).
+    Returns (exact_lookup, titles_by_platform) for fuzzy fallback."""
+    csv_path = Path(__file__).parent / "pricecharting_nintendo_prices.csv"
+    lookup = {}           # (platform, norm_title) → {loose, cib}
+    titles_by_plat = {}   # platform → {norm_title: original_title}
+
+    if not csv_path.exists():
+        print("[csv] pricecharting_nintendo_prices.csv not found")
+        return lookup, titles_by_plat
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            platform = row.get("Console", "").strip()
+            title = row.get("Title", "").strip()
+            if not platform or not title:
+                continue
+            norm = _normalize_title(title)
+            # Parse prices: "$19.42" or "$1,750.00" → float
+            loose = row.get("Loose Price", "$0").replace("$", "").replace(",", "")
+            cib = row.get("CIB Price", "$0").replace("$", "").replace(",", "")
+            try:
+                loose_f = float(loose) if loose else 0.0
+                cib_f = float(cib) if cib else 0.0
+            except ValueError:
+                continue
+            lookup[(platform, norm)] = {"loose": loose_f, "cib": cib_f, "title": title}
+            if platform not in titles_by_plat:
+                titles_by_plat[platform] = {}
+            titles_by_plat[platform][norm] = title
+
+    print(f"[csv] Loaded {len(lookup)} game prices from CSV")
+    return lookup, titles_by_plat
+
+
+CSV_PRICES, CSV_TITLES_BY_PLATFORM = _load_csv_prices()
+
+
+def _csv_lookup(game_title: str, platform: str) -> dict | None:
+    """Look up a game in the CSV price database. Returns price dict or None."""
+    # Map platform name to CSV format
+    csv_platform = PLATFORM_TO_CSV.get(platform.lower(), platform)
+    norm_title = _normalize_title(game_title)
+
+    # Exact match
+    match = CSV_PRICES.get((csv_platform, norm_title))
+    if match:
+        print(f"[csv] Exact match: '{game_title}' on {csv_platform} → ${match['loose']:.2f} loose, ${match['cib']:.2f} CIB")
+        return {"loose_price": match["loose"], "cib_price": match["cib"], "new_price": 0, "source": "csv"}
+
+    # Fuzzy match within the same platform
+    platform_titles = CSV_TITLES_BY_PLATFORM.get(csv_platform, {})
+    if not platform_titles:
+        return None
+
+    candidates = list(platform_titles.keys())
+    close = difflib.get_close_matches(norm_title, candidates, n=1, cutoff=0.8)
+    if close:
+        matched_norm = close[0]
+        match = CSV_PRICES[(csv_platform, matched_norm)]
+        print(f"[csv] Fuzzy match: '{game_title}' → '{match['title']}' on {csv_platform} → ${match['loose']:.2f} loose, ${match['cib']:.2f} CIB")
+        return {"loose_price": match["loose"], "cib_price": match["cib"], "new_price": 0, "source": "csv"}
+
+    return None
 
 
 def _load_token_data() -> dict:
@@ -252,7 +341,13 @@ If you can read the MPN/part number off the cartridge or disc, use that. Otherwi
 
 
 def get_market_price(game_title: str, platform: str) -> dict:
-    """Query PriceCharting for market data."""
+    """Get market prices — tries local CSV first, then PriceCharting API."""
+    # 1. Try local CSV database
+    csv_result = _csv_lookup(game_title, platform)
+    if csv_result:
+        return csv_result
+
+    # 2. Fall back to PriceCharting API
     try:
         api_key = os.environ.get("PRICECHARTING_API_KEY", "")
         search = f"{game_title} {platform}"
@@ -272,7 +367,7 @@ def get_market_price(game_title: str, platform: str) -> dict:
             }
     except Exception:
         pass
-    # Fallback: return zeroes, Gemini will estimate
+    # 3. Fallback: return zeroes, Cerebras will estimate
     return {"loose_price": 0, "cib_price": 0, "new_price": 0, "source": "estimated"}
 
 
