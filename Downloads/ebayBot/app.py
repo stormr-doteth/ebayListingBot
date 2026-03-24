@@ -80,6 +80,11 @@ PLATFORM_TO_CSV = {
     "gamecube": "GameCube", "nintendo gamecube": "GameCube",
     "nintendo ds": "Nintendo DS", "ds": "Nintendo DS",
     "wii": "Wii", "nintendo wii": "Wii",
+    "playstation": "PlayStation", "ps1": "PlayStation", "psx": "PlayStation", "playstation 1": "PlayStation",
+    "playstation 2": "PlayStation 2", "ps2": "PlayStation 2",
+    "playstation 3": "PlayStation 3", "ps3": "PlayStation 3",
+    "xbox": "Xbox", "microsoft xbox": "Xbox",
+    "xbox 360": "Xbox 360", "microsoft xbox 360": "Xbox 360",
 }
 
 
@@ -91,7 +96,7 @@ def _normalize_title(title: str) -> str:
 def _load_csv_prices() -> tuple[dict, dict]:
     """Load CSV into a lookup dict keyed by (csv_platform, normalized_title).
     Returns (exact_lookup, titles_by_platform) for fuzzy fallback."""
-    csv_path = Path(__file__).parent / "pricecharting_nintendo_prices.csv"
+    csv_path = Path(__file__).parent / "pricecharting_master_price.csv"
     lookup = {}           # (platform, norm_title) → {loose, cib}
     titles_by_plat = {}   # platform → {norm_title: original_title}
 
