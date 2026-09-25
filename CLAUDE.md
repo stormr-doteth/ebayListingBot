@@ -16,7 +16,8 @@ ebayListingBot/
 ├── setup_shipping_policy.py         # One-time: create calculated-shipping policy
 ├── requirements.txt
 ├── .env                             # Secrets/config (gitignored)
-├── ebay_tokens.json                 # Saved eBay OAuth tokens (gitignored, created by /ebay/callback)
+├── ebay_tokens.json                 # Saved eBay OAuth tokens (gitignored)
+├── ebay_config.json                 # eBay App ID / Cert ID / RuName from the setup screen (gitignored)
 ├── .flask_secret                    # Session key (gitignored, auto-created)
 └── uploads/                         # Photos, auto-deleted after UPLOAD_RETENTION_DAYS (gitignored)
 ```
@@ -31,8 +32,9 @@ ebayListingBot/
 ## Environment Variables (in `.env`)
 ```bash
 # eBay (required to publish)
-EBAY_TOKEN=v^1.1-...                   # Static token fallback (or use OAuth below)
-EBAY_APP_ID= / EBAY_CERT_ID= / EBAY_REDIRECT_URI=   # OAuth "Connect eBay" button + auto-refresh
+EBAY_TOKEN=v^1.1-...                   # Legacy static token (expires in ~2h) — not needed once OAuth is connected
+# App ID / Cert ID / RuName are normally entered in the app ("⚙ Set up eBay", saved to ebay_config.json).
+# EBAY_APP_ID / EBAY_CERT_ID / EBAY_REDIRECT_URI in .env still work as a fallback.
 EBAY_SANDBOX=false
 EBAY_FULFILLMENT_POLICY=255223329024
 EBAY_PAYMENT_POLICY=255223242024
@@ -75,7 +77,12 @@ Typical timing: ~20–45s per game without web research, ~45–110s with it; gam
 | `/publish` | POST | JSON `{listing, game_info, photos}` → `{success, listing_id, url}` or `{success: false, error}` |
 | `/publish-batch` | POST | JSON `{games: [...]}` → `{results: [...]}` |
 | `/ebay/auth`, `/ebay/callback` | GET | OAuth consent flow (with `state` check) |
-| `/ebay/status`, `/ebay/disconnect` | GET/POST | Connection status / forget tokens |
+| `/ebay/config` | GET/POST | Read (secret redacted) / save app credentials; verified with eBay before saving |
+| `/ebay/code` | POST | Finish OAuth by pasting the redirect URL (eBay only redirects to https, the app is local http) |
+| `/ebay/status`, `/ebay/disconnect` | GET/POST | Connection status (incl. `days_left` on the 18-month login, live check of a static token) / forget tokens |
+
+**eBay login lifecycle:** set up once → Connect eBay → approve → paste the example.com link → the app
+auto-refreshes the 2-hour access token from the ~18-month refresh token. A banner appears 30 days before it expires.
 
 `photos` are refs like `<batch>/game_0/photo_0.jpg`, resolved by `resolve_photo()` which refuses anything outside `uploads/`. The browser never sends file paths.
 

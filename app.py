@@ -73,9 +73,29 @@ EBAY_LOCATION_KEY = os.environ.get("EBAY_LOCATION_KEY", "RETRO_HQ")
 EBAY_CATEGORY_ID = "139973"  # Video Games
 
 # OAuth2 credentials (from eBay Developer dashboard)
-EBAY_APP_ID = os.environ.get("EBAY_APP_ID", "")        # Client ID
-EBAY_CERT_ID = os.environ.get("EBAY_CERT_ID", "")      # Client Secret
-EBAY_REDIRECT_URI = os.environ.get("EBAY_REDIRECT_URI", "")  # RuName
+# App credentials are entered once in the app's "Set up eBay" screen (saved to ebay_config.json),
+# or can be put in .env as EBAY_APP_ID / EBAY_CERT_ID / EBAY_REDIRECT_URI.
+EBAY_CONFIG_FILE = BASE_DIR / "ebay_config.json"
+
+
+def ebay_creds() -> dict:
+    """{app_id, cert_id, ru_name} — Client ID, Client Secret and RuName from developer.ebay.com."""
+    saved = {}
+    if EBAY_CONFIG_FILE.exists():
+        try:
+            saved = json.loads(EBAY_CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {
+        "app_id": saved.get("app_id") or os.environ.get("EBAY_APP_ID", ""),
+        "cert_id": saved.get("cert_id") or os.environ.get("EBAY_CERT_ID", ""),
+        "ru_name": saved.get("ru_name") or os.environ.get("EBAY_REDIRECT_URI", ""),
+    }
+
+
+def oauth_configured() -> bool:
+    return all(ebay_creds().values())
+
 EBAY_SCOPES = [
     "https://api.ebay.com/oauth/api_scope",
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
@@ -570,7 +590,8 @@ def _save_token_data(data: dict):
 
 
 def _ebay_basic_auth() -> dict:
-    credentials = base64.b64encode(f"{EBAY_APP_ID}:{EBAY_CERT_ID}".encode()).decode()
+    creds = ebay_creds()
+    credentials = base64.b64encode(f"{creds['app_id']}:{creds['cert_id']}".encode()).decode()
     return {"Content-Type": "application/x-www-form-urlencoded", "Authorization": f"Basic {credentials}"}
 
 
@@ -597,7 +618,7 @@ def _exchange_auth_code(code: str):
     """Swap an OAuth authorization code for access + refresh tokens and save them."""
     resp = requests.post(f"{EBAY_BASE_URL}/identity/v1/oauth2/token", headers=_ebay_basic_auth(), timeout=15,
                          data={"grant_type": "authorization_code", "code": code,
-                               "redirect_uri": EBAY_REDIRECT_URI})
+                               "redirect_uri": ebay_creds()["ru_name"]})
     if resp.status_code != 200:
         raise RuntimeError(_ebay_error("eBay token exchange failed", resp))
     token_resp = resp.json()
@@ -633,7 +654,7 @@ def get_ebay_token() -> str:
     if token_data.get("access_token"):
         if time.time() < token_data.get("expires_at", 0):
             return token_data["access_token"]
-        if token_data.get("refresh_token") and EBAY_APP_ID and EBAY_CERT_ID:
+        if token_data.get("refresh_token") and oauth_configured():
             try:
                 return _refresh_access_token(token_data["refresh_token"])["access_token"]
             except Exception as e:
@@ -839,10 +860,11 @@ def login():
 @require_pin
 def ebay_auth():
     """Start eBay OAuth2 — redirect to eBay's consent page."""
-    if not EBAY_APP_ID or not EBAY_REDIRECT_URI:
-        return jsonify({"error": "EBAY_APP_ID and EBAY_REDIRECT_URI must be set in .env"}), 500
+    creds = ebay_creds()
+    if not oauth_configured():
+        return redirect(url_for("index"))  # the UI shows "Set up eBay" instead
     session["oauth_state"] = secrets.token_urlsafe(24)
-    params = {"client_id": EBAY_APP_ID, "response_type": "code", "redirect_uri": EBAY_REDIRECT_URI,
+    params = {"client_id": creds["app_id"], "response_type": "code", "redirect_uri": creds["ru_name"],
               "scope": " ".join(EBAY_SCOPES), "state": session["oauth_state"]}
     return redirect(f"{EBAY_AUTH_URL}/oauth2/authorize?{urlencode(params)}")
 
@@ -888,19 +910,48 @@ def ebay_code():
 @require_pin
 def ebay_status():
     token_data = _load_token_data()
-    oauth_configured = bool(EBAY_APP_ID and EBAY_CERT_ID and EBAY_REDIRECT_URI)
+    configured = oauth_configured()
     if token_data.get("access_token"):
-        if time.time() > token_data.get("refresh_expires_at", float("inf")):
+        refresh_expires = token_data.get("refresh_expires_at", float("inf"))
+        days_left = int((refresh_expires - time.time()) // 86400) if refresh_expires != float("inf") else None
+        if time.time() > refresh_expires:
             status = "expired"
         elif time.time() > token_data.get("expires_at", 0):
             status = "needs_refresh"  # refreshed automatically on next call
         else:
             status = "active"
-        return jsonify({"connected": status != "expired", "status": status, "oauth_configured": oauth_configured})
+        return jsonify({"connected": status != "expired", "status": status, "oauth_configured": configured,
+                        "days_left": days_left})
     if EBAY_TOKEN_LEGACY:
         status = "legacy" if legacy_token_valid() else "legacy_expired"
-        return jsonify({"connected": status == "legacy", "status": status, "oauth_configured": oauth_configured})
-    return jsonify({"connected": False, "status": "disconnected", "oauth_configured": oauth_configured})
+        return jsonify({"connected": status == "legacy", "status": status, "oauth_configured": configured})
+    return jsonify({"connected": False, "status": "disconnected", "oauth_configured": configured})
+
+
+@app.route("/ebay/config", methods=["GET", "POST"])
+@require_pin
+def ebay_config():
+    """GET: which credentials are set (never returns the secret). POST: save them."""
+    if request.method == "GET":
+        creds = ebay_creds()
+        return jsonify({"app_id": creds["app_id"], "ru_name": creds["ru_name"], "has_cert_id": bool(creds["cert_id"])})
+    data = request.get_json(silent=True) or {}
+    current = ebay_creds()
+    new = {key: (data.get(key) or "").strip() or current[key] for key in ("app_id", "cert_id", "ru_name")}
+    if not all(new.values()):
+        return jsonify({"success": False, "error": "All three are needed: App ID, Cert ID and RuName"}), 400
+    # Sanity check: eBay confirms the App ID + Cert ID pair before we save it
+    resp = requests.post(f"{EBAY_BASE_URL}/identity/v1/oauth2/token", timeout=15,
+                         headers={"Content-Type": "application/x-www-form-urlencoded",
+                                  "Authorization": "Basic " + base64.b64encode(f"{new['app_id']}:{new['cert_id']}".encode()).decode()},
+                         data={"grant_type": "client_credentials", "scope": "https://api.ebay.com/oauth/api_scope"})
+    if resp.status_code != 200:
+        which = "sandbox" if EBAY_SANDBOX else "Production"
+        return jsonify({"success": False, "error": f"eBay didn't accept that App ID + Cert ID — make sure both are from the {which} keyset"}), 400
+    EBAY_CONFIG_FILE.write_text(json.dumps(new, indent=2))
+    EBAY_CONFIG_FILE.chmod(0o600)
+    print("[oauth] eBay app credentials saved")
+    return jsonify({"success": True})
 
 
 @app.route("/ebay/disconnect", methods=["POST"])

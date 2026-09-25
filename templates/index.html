@@ -695,6 +695,21 @@
       font-size: 20px;
     }
 
+    .setup-steps { font-size: 0.75rem; line-height: 1.6; color: var(--muted); margin: 0 0 18px 18px; }
+    .setup-steps li { margin-bottom: 8px; }
+    .setup-steps b, .setup-steps code { color: var(--text); }
+    .setup-steps a { color: var(--accent); }
+    .setup-error { color: #ff4444; font-size: 0.75rem; margin-bottom: 12px; min-height: 1em; }
+    .ebay-banner {
+      margin-top: 10px; padding: 8px 12px; border: 1px solid rgba(255,204,0,0.4); border-radius: 4px;
+      color: var(--accent2); font-size: 0.75rem; display: none;
+    }
+    .ebay-banner a { color: var(--accent2); }
+    .btn-link-small {
+      font-family: var(--font-mono); font-size: 11px; padding: 6px 10px; border-radius: 4px;
+      border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer;
+    }
+
     .description-preview {
       font-family: sans-serif;
       font-size: 14px;
@@ -1076,8 +1091,10 @@
       </div>
       <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:var(--accent); color:#000; font-weight:700; cursor:pointer;">Connect eBay</button>
       <button id="ebay-paste-btn" onclick="pasteEbayLink()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:transparent; color:var(--accent); cursor:pointer;">Paste eBay link</button>
+      <button class="btn-link-small" id="ebay-setup-btn" onclick="openEbaySetup()" title="eBay app keys">⚙ eBay setup</button>
       <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">Disconnect</button>
     </div>
+    <div class="ebay-banner" id="ebay-banner"></div>
   </header>
 
   <!-- Upload section -->
@@ -1269,6 +1286,38 @@
   </div>
 </div>
 
+<!-- eBay setup modal: paste the three keys from developer.ebay.com once -->
+<div class="modal-overlay" id="setup-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <strong>Set up eBay (one time)</strong>
+      <button class="modal-close" onclick="closeEbaySetup()">✕</button>
+    </div>
+    <ol class="setup-steps">
+      <li>Open <a href="https://developer.ebay.com/my/keys" target="_blank" rel="noopener">developer.ebay.com → Application Keys</a>.
+        In the <b>{{ 'Sandbox' if sandbox else 'Production' }}</b> box, copy the <b>App ID (Client ID)</b> and <b>Cert ID (Client Secret)</b>.</li>
+      <li>On that page click <b>User Tokens</b> next to the keyset → <b>Get a Token from eBay via Your Application</b>.
+        Copy the <b>RuName</b> (looks like <code>Name-Name-App-abcdef</code>). Add one if there's none.</li>
+      <li>On that RuName, set <b>Your auth accepted URL</b> to <code>https://example.com</code> and save.</li>
+      <li>Paste the three values below, then tap <b>Save</b>. They're stored on this Mac only.</li>
+    </ol>
+    <div class="field-group">
+      <div class="field-label">App ID (Client ID)</div>
+      <input type="text" class="field-input" id="setup-app-id" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    </div>
+    <div class="field-group">
+      <div class="field-label">Cert ID (Client Secret)</div>
+      <input type="password" class="field-input" id="setup-cert-id" autocomplete="off" placeholder="" />
+    </div>
+    <div class="field-group">
+      <div class="field-label">RuName</div>
+      <input type="text" class="field-input" id="setup-ru-name" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    </div>
+    <div class="setup-error" id="setup-error"></div>
+    <button class="btn-publish" id="setup-save-btn" onclick="saveEbaySetup()">Save</button>
+  </div>
+</div>
+
 <div id="toast">✅ Listed on eBay!</div>
 
 <script>
@@ -1404,9 +1453,66 @@
       // After approving on eBay you land on an https page this local app can't receive;
       // pasting that address here finishes the connection.
       pasteBtn.style.display = connectBtn.style.display;
+
+      // First run: nothing configured yet — make the setup button the obvious next step
+      const setupBtn = document.getElementById('ebay-setup-btn');
+      setupBtn.textContent = data.oauth_configured ? '⚙' : '⚙ Set up eBay';
+      setupBtn.style.borderColor = data.oauth_configured ? '' : 'var(--accent)';
+      setupBtn.style.color = data.oauth_configured ? '' : 'var(--accent)';
+
+      // Warn a month before the 18-month login runs out
+      const banner = document.getElementById('ebay-banner');
+      if (data.days_left != null && data.days_left <= 30) {
+        banner.innerHTML = `eBay login expires in ${data.days_left} day${data.days_left === 1 ? '' : 's'} — <a href="/ebay/auth">reconnect now</a>, then paste the link.`;
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
     } catch (e) {
       console.error('eBay status check failed:', e);
     }
+  }
+
+  async function openEbaySetup() {
+    document.getElementById('setup-error').textContent = '';
+    try {
+      const cfg = await (await fetch('/ebay/config')).json();
+      document.getElementById('setup-app-id').value = cfg.app_id || '';
+      document.getElementById('setup-ru-name').value = cfg.ru_name || '';
+      document.getElementById('setup-cert-id').value = '';
+      document.getElementById('setup-cert-id').placeholder = cfg.has_cert_id ? 'Saved — leave blank to keep' : '';
+    } catch (e) {}
+    document.getElementById('setup-modal').classList.add('open');
+  }
+
+  function closeEbaySetup() {
+    document.getElementById('setup-modal').classList.remove('open');
+  }
+
+  async function saveEbaySetup() {
+    const btn = document.getElementById('setup-save-btn');
+    const errorEl = document.getElementById('setup-error');
+    btn.disabled = true;
+    btn.textContent = 'Checking with eBay...';
+    errorEl.textContent = '';
+    try {
+      const result = await postJson('/ebay/config', {
+        app_id: document.getElementById('setup-app-id').value,
+        cert_id: document.getElementById('setup-cert-id').value,
+        ru_name: document.getElementById('setup-ru-name').value,
+      });
+      if (result.success) {
+        closeEbaySetup();
+        showToast('✅ Saved — now tap Connect eBay');
+        checkEbayStatus();
+      } else {
+        errorEl.textContent = result.error;
+      }
+    } catch (e) {
+      errorEl.textContent = 'Could not save: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Save';
   }
 
   async function pasteEbayLink() {
