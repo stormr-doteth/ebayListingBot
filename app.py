@@ -368,7 +368,8 @@ class ClaudeError(RuntimeError):
     pass
 
 
-def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: int = CLAUDE_TIMEOUT) -> dict:
+def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: int = CLAUDE_TIMEOUT,
+               usage: dict | None = None) -> dict:
     """Run one headless Claude Code call and return its structured JSON output.
 
     - Uses your Claude plan login (ANTHROPIC_API_KEY is removed so it never bills an API key).
@@ -406,10 +407,24 @@ def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: 
         raise ClaudeError(f"Claude CLI failed: {detail or 'no output'}")
     if result.get("is_error") or not isinstance(result.get("structured_output"), dict):
         raise ClaudeError(f"Claude error: {str(result.get('result') or result.get('subtype'))[:400]}")
+    if usage is not None:
+        _add_usage(usage, result)
     return result["structured_output"]
 
 
-def identify_game(photo_dir: Path, notes: str, tested: bool) -> dict:
+def _add_usage(total: dict, result: dict):
+    """Accumulate token counts from a `claude -p` JSON result. total_cost_usd is what the
+    same tokens would cost on the API — on a Claude plan it's covered by your plan's usage limits."""
+    u = result.get("usage") or {}
+    total["input"] = total.get("input", 0) + u.get("input_tokens", 0)
+    total["cache_write"] = total.get("cache_write", 0) + u.get("cache_creation_input_tokens", 0)
+    total["cache_read"] = total.get("cache_read", 0) + u.get("cache_read_input_tokens", 0)
+    total["output"] = total.get("output", 0) + u.get("output_tokens", 0)
+    total["api_equiv_usd"] = round(total.get("api_equiv_usd", 0) + (result.get("total_cost_usd") or 0), 4)
+    total["seconds"] = round(total.get("seconds", 0) + (result.get("duration_ms") or 0) / 1000, 1)
+
+
+def identify_game(photo_dir: Path, notes: str, tested: bool, usage: dict | None = None) -> dict:
     """Step 1: look at every photo and describe exactly what's being sold."""
     photos = sorted((photo_dir / "ai").glob("photo_*.jpg"), key=lambda p: int(p.stem.split("_")[1]))
     # @-mentions attach images straight into the prompt (fast, no tool round-trip), but the CLI
@@ -445,7 +460,7 @@ Identify exactly what it is and grade it:
 Tested and working: {"yes, seller confirmed" if tested else "not stated"}
 Seller's notes (trust these over the photos for things photos can't show):
 {notes or "(none)"}"""
-    return run_claude(prompt, GAME_INFO_SCHEMA, cwd=photo_dir / "ai", tools=["Read"], timeout=150)
+    return run_claude(prompt, GAME_INFO_SCHEMA, cwd=photo_dir / "ai", tools=["Read"], timeout=150, usage=usage)
 
 
 def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568):
@@ -469,7 +484,8 @@ def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568):
     sheet.save(out, "JPEG", quality=88)
 
 
-def write_listing(game_info: dict, guide: list[dict], notes: str, tested: bool, web: bool, workdir: Path) -> dict:
+def write_listing(game_info: dict, guide: list[dict], notes: str, tested: bool, web: bool, workdir: Path,
+                  usage: dict | None = None) -> dict:
     """Step 2: price the item and write the eBay title + description."""
     research = """Before pricing, use WebSearch to find RECENT SOLD prices (eBay sold listings,
 PriceCharting, etc.) for this exact variant and completeness. Prefer sold over asking prices.
@@ -518,7 +534,7 @@ condition: keep the photo grade unless the seller's notes clearly change it.
 flags: ONLY about pricing confidence (e.g. "Few sold comps — price is an estimate"). Never about
 the item itself — that's already covered. At most 2, under 15 words each. Usually empty."""
     tools = ["WebSearch"] if web else []
-    return run_claude(prompt, LISTING_SCHEMA, cwd=workdir, tools=tools)
+    return run_claude(prompt, LISTING_SCHEMA, cwd=workdir, tools=tools, usage=usage)
 
 
 def _clean_game_info(game_info: dict) -> dict:
@@ -552,14 +568,19 @@ def _clean_listing(listing: dict, game_info: dict) -> dict:
 def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: bool, web: bool, progress) -> dict:
     """Full pipeline for one game. `progress(step)` reports identifying/pricing/generating."""
     progress("identifying")
-    game_info = _clean_game_info(identify_game(photo_dir, notes, tested))
+    usage: dict = {}
+    game_info = _clean_game_info(identify_game(photo_dir, notes, tested, usage))
 
     progress("pricing")
     guide = price_guide_matches(game_info["game_title"], game_info["platform"])
     guide += pricecharting_api_matches(game_info["game_title"], game_info["platform"])
 
     progress("generating")
-    listing = _clean_listing(write_listing(game_info, guide, notes, tested, web, photo_dir), game_info)
+    listing = _clean_listing(write_listing(game_info, guide, notes, tested, web, photo_dir, usage), game_info)
+    usage["total_tokens"] = usage["input"] + usage["cache_write"] + usage["cache_read"] + usage["output"]
+    print(f"[usage] {game_info['game_title']}: {usage['total_tokens']:,} tokens "
+          f"({usage['output']:,} output, {usage['cache_read']:,} cached), "
+          f"{usage['seconds']}s, API-equivalent ${usage['api_equiv_usd']:.3f}")
 
     price_source = "web + price guide" if web and listing["comps"] else "price guide" if guide else "Claude estimate"
     return {
@@ -568,6 +589,7 @@ def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: boo
                        "source": price_source, "guide_matches": guide},
         "listing": listing,
         "photos": photo_refs,
+        "usage": usage,
     }
 
 

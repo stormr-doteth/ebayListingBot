@@ -1363,7 +1363,9 @@
       ${g.authenticity !== 'likely_authentic' && g.authenticity_notes ? `<div>${esc(g.authenticity_notes)}</div>` : ''}
       ${flags.length ? `<ul class="ai-flags">${flags.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : '<div style="color:var(--green)">✓ Nothing flagged</div>'}
       ${comps ? `<details class="ai-comps"><summary>Sold comps (${l.comps.length})</summary><ul>${comps}</ul></details>` : ''}
-      ${guide ? `<details class="ai-comps"><summary>Price guide matches</summary><ul>${guide}</ul></details>` : ''}`;
+      ${guide ? `<details class="ai-comps"><summary>Price guide matches</summary><ul>${guide}</ul></details>` : ''}
+      ${data.usage ? `<div style="margin-top:8px;color:var(--muted);font-size:0.65rem">Claude: ${data.usage.total_tokens.toLocaleString()} tokens
+        (${data.usage.output.toLocaleString()} written) · ${data.usage.seconds}s</div>` : ''}`;
   }
 
   // POST games to /analyze-batch and call onEvent for each streamed event
