@@ -55,7 +55,6 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "sonnet")
 CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_TIMEOUT", "240"))
 ANALYZE_WORKERS = int(os.environ.get("ANALYZE_WORKERS", "3"))   # games analyzed in parallel
 ATTACH_LIMIT = 3                                                  # photos the CLI attaches via @-mention
-WEB_PRICING_DEFAULT = _env_bool("WEB_PRICING", True)             # research sold comps on the web
 
 # App
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -203,10 +202,10 @@ def _load_price_guide() -> dict[str, list[dict]]:
 PRICE_GUIDE = _load_price_guide()
 
 
-def price_guide_matches(game_title: str, platform: str, limit: int = 4) -> list[dict]:
-    """Closest price-guide entries for a game. Several are returned on purpose —
-    variants (e.g. "Player's Choice", "[Greatest Hits]") are separate rows and
-    Claude picks the right one from the photos."""
+def price_guide_matches(game_title: str, platform: str, limit: int = 6) -> list[dict]:
+    """Closest price-guide entries for a game. Variants ("[Player's Choice]", "[Greatest Hits]")
+    are separate rows, so several are returned; pick_price_row() chooses one and the UI
+    offers the others as one-tap alternatives."""
     console = PLATFORM_TO_CSV.get(platform.strip().lower(), platform.strip())
     entries = PRICE_GUIDE.get(console, [])
     norm = _normalize_title(game_title)
@@ -225,7 +224,47 @@ def price_guide_matches(game_title: str, platform: str, limit: int = 4) -> list[
             scored.append((score, e))
     scored.sort(key=lambda s: s[0], reverse=True)
     return [{"title": e["title"], "console": console, "loose": e["loose"], "cib": e["cib"],
-             "match": round(s, 2), "source": "PriceCharting CSV"} for s, e in scored[:limit]]
+             "match": round(s, 2), "source": "PriceCharting CSV",
+             "url": pricecharting_link(e["title"], console)} for s, e in scored[:limit]]
+
+
+def pricecharting_link(title: str, console: str) -> str:
+    """pricecharting.com search for a game, so the seller can check the current price."""
+    query = f"{title.replace('[', '').replace(']', '')} {console}"
+    return "https://www.pricecharting.com/search-products?" + urlencode({"q": query, "type": "prices"})
+
+
+def _split_variant(title: str) -> tuple[str, str]:
+    """'Diddy Kong Racing [Player's Choice]' → ('diddy kong racing', 'players choice')."""
+    match = re.search(r"\[(.*?)\]", title)
+    return _normalize_title(re.sub(r"\[.*?\]", "", title)), _normalize_title(match.group(1)) if match else ""
+
+
+def pick_price_row(game_info: dict, candidates: list[dict]) -> dict | None:
+    """Choose the price-guide row for this exact game AND variant (or None if it isn't listed)."""
+    want_title = _normalize_title(game_info.get("game_title", ""))
+    want_variant = _normalize_title(game_info.get("variant") or "")
+    # Variant words can also show up in the listing title or part number (SLUS-20062GH = Greatest Hits)
+    mpn = game_info.get("mpn") or ""
+    hints = " ".join([want_variant, _normalize_title(game_info.get("listing_title") or ""),
+                      "greatest hits" if re.search(r"\dGH\b", mpn) else ""])
+    best, best_score = None, 0.0
+    for row in candidates:
+        title, variant = _split_variant(row["title"])
+        score = difflib.SequenceMatcher(None, want_title, title).ratio()
+        if score < 0.8:
+            continue
+        if variant and variant in hints:
+            score += 1.2        # e.g. photos say Greatest Hits and so does the row
+        elif want_variant and variant and want_variant in variant:
+            score += 1
+        elif not want_variant and not variant:
+            score += 1          # standard release ↔ plain row
+        elif variant:
+            score -= 0.5        # a variant row we don't have (First Print, Not For Resale…)
+        if score > best_score:
+            best, best_score = row, score
+    return best
 
 
 def pricecharting_api_matches(game_title: str, platform: str, limit: int = 3) -> list[dict]:
@@ -239,7 +278,8 @@ def pricecharting_api_matches(game_title: str, platform: str, limit: int = 3) ->
         products = resp.json().get("products", [])[:limit]
         return [{"title": p.get("product-name", ""), "console": p.get("console-name", ""),
                  "loose": (p.get("loose-price") or 0) / 100, "cib": (p.get("cib-price") or 0) / 100,
-                 "source": "PriceCharting API"} for p in products]
+                 "source": "PriceCharting API (live)",
+                 "url": f"https://www.pricecharting.com/offers?product={p.get('id')}"} for p in products]
     except Exception as e:
         print(f"[prices] PriceCharting API error: {e}")
         return []
@@ -330,39 +370,16 @@ GAME_INFO_SCHEMA = {
         "authenticity_notes": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "How sure you are of the exact title AND variant"},
         "flags": {"type": "array", "items": {"type": "string"}, "description": "Short things the seller should verify before listing"},
+        "listing_title": {"type": "string", "description": "eBay title, max 80 characters"},
+        "listing_description": {"type": "string", "description": "Listing description as simple HTML"},
+        "estimated_loose": {"type": "number", "description": "Your best estimate of the loose price in USD, used only if the game isn't in the price guide"},
+        "estimated_cib": {"type": "number", "description": "Your best estimate of the complete-in-box price in USD, used only if the game isn't in the price guide"},
     },
     "required": ["game_title", "platform", "item_type", "variant", "year", "region", "publisher", "genre",
                  "rating", "mpn", "has_game", "has_box", "has_manual", "extras", "condition_notes",
-                 "condition", "authenticity", "authenticity_notes", "confidence", "flags"],
+                 "condition", "authenticity", "authenticity_notes", "confidence", "flags",
+                 "listing_title", "listing_description", "estimated_loose", "estimated_cib"],
 }
-
-LISTING_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string", "description": "eBay title, max 80 characters"},
-        "description": {"type": "string", "description": "Listing description as simple HTML"},
-        "condition": {"type": "string", "enum": CONDITIONS},
-        "market_loose": {"type": "number", "description": "Typical sold price, game only. 0 if unknown"},
-        "market_cib": {"type": "number", "description": "Typical sold price, complete in box. 0 if unknown"},
-        "suggested_price": {"type": "number"},
-        "price_low": {"type": "number"},
-        "price_high": {"type": "number"},
-        "price_reasoning": {"type": "string", "description": "One or two sentences"},
-        "comps": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"price": {"type": "number"}, "source": {"type": "string"},
-                               "note": {"type": "string"}, "url": {"type": "string"}},
-                "required": ["price", "source", "note"],
-            },
-        },
-        "flags": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["title", "description", "condition", "market_loose", "market_cib", "suggested_price",
-                 "price_low", "price_high", "price_reasoning", "comps", "flags"],
-}
-
 
 class ClaudeError(RuntimeError):
     pass
@@ -373,8 +390,8 @@ def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: 
     """Run one headless Claude Code call and return its structured JSON output.
 
     - Uses your Claude plan login (ANTHROPIC_API_KEY is removed so it never bills an API key).
-    - Only the listed tools exist. Read is limited to `cwd` (the photo folder) because it isn't
-      pre-approved, so Claude can't read anything else on this Mac.
+    - Only the listed tools exist. Read isn't pre-approved, so it only works inside `cwd`
+      (the photo folder) — Claude can't read anything else on this Mac.
     - --setting-sources "" ignores your personal Claude Code settings/hooks for these calls.
     """
     cmd = [
@@ -387,9 +404,6 @@ def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: 
         "--no-session-persistence",
         "--setting-sources", "",
     ]
-    web_tools = [t for t in tools if t.startswith("Web")]
-    if web_tools:
-        cmd += ["--allowedTools", ",".join(web_tools)]
 
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     try:
@@ -424,8 +438,9 @@ def _add_usage(total: dict, result: dict):
     total["seconds"] = round(total.get("seconds", 0) + (result.get("duration_ms") or 0) / 1000, 1)
 
 
-def identify_game(photo_dir: Path, notes: str, tested: bool, usage: dict | None = None) -> dict:
-    """Step 1: look at every photo and describe exactly what's being sold."""
+def analyze_photos(photo_dir: Path, notes: str, tested: bool, usage: dict | None = None) -> dict:
+    """One Claude call: identify and grade the item from every photo, and write the eBay title and
+    description. Pricing is NOT Claude's job — it's looked up from PriceCharting afterwards."""
     photos = sorted((photo_dir / "ai").glob("photo_*.jpg"), key=lambda p: int(p.stem.split("_")[1]))
     # @-mentions attach images straight into the prompt (fast, no tool round-trip), but the CLI
     # only attaches the first few. With more photos, the rest go on one numbered contact sheet,
@@ -457,7 +472,28 @@ Identify exactly what it is and grade it:
   e.g. "Back of cart not shown", "Can't read part number". Refer to photos by what they show
   ("the disc photo"), never by filename. Empty if nothing important.
 
-Tested and working: {"yes, seller confirmed" if tested else "not stated"}
+Then write the eBay listing:
+
+listing_title (max 80 characters — this is what buyers search):
+- Lead with the exact game title, then platform, then what matters to buyers: variant
+  (e.g. "Player's Choice"), completeness ("CIB", "Complete", "Cart Only", "Disc Only",
+  "w/ Manual"), region if not USA, "Authentic" (ONLY if authenticity is likely_authentic),
+  "Tested" (only if confirmed below).
+- Use common search abbreviations when they save space (N64, SNES, NES, PS1, PS2, GBA, GC).
+- No ALL CAPS words except abbreviations, no emoji, no "L@@K", no "Rare" unless it genuinely is.
+
+listing_description (simple HTML: <p>, <ul>, <li>, <b> only, no styles or scripts):
+- One short paragraph: what it is (title, platform, region, variant).
+- A bullet list of at most 6 short bullets: what's included; condition specifics (the actual
+  wear, honestly); tested/working status only as stated below.
+- Only describe as included what you can see. If something might be missing, leave it out.
+- One line: "Ships quickly and well packed." Nothing salesy, no filler, no price.
+- Don't mention photos or anything addressed to the seller — buyers read this.
+
+estimated_loose / estimated_cib: rough USD values from your own knowledge. They're only used
+when the game isn't in the price guide, so don't research — just estimate.
+
+Tested and working: {"YES — seller confirmed" if tested else "NOT CONFIRMED — do not claim it was tested"}
 Seller's notes (trust these over the photos for things photos can't show):
 {notes or "(none)"}"""
     return run_claude(prompt, GAME_INFO_SCHEMA, cwd=photo_dir / "ai", tools=["Read"], timeout=150, usage=usage)
@@ -484,59 +520,6 @@ def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568):
     sheet.save(out, "JPEG", quality=88)
 
 
-def write_listing(game_info: dict, guide: list[dict], notes: str, tested: bool, web: bool, workdir: Path,
-                  usage: dict | None = None) -> dict:
-    """Step 2: price the item and write the eBay title + description."""
-    research = """Before pricing, use WebSearch to find RECENT SOLD prices (eBay sold listings,
-PriceCharting, etc.) for this exact variant and completeness. Prefer sold over asking prices.
-Put 2-5 of the most relevant comps in `comps` with their source (and URL when you have one).""" if web else \
-        "Price from the price guide data and your own knowledge. Leave `comps` empty."
-    completeness = "complete in box (CIB)" if game_info.get("has_box") and game_info.get("has_manual") else \
-        "boxed, no manual" if game_info.get("has_box") else \
-        "game + manual, no box" if game_info.get("has_manual") else "game only (loose)"
-
-    prompt = f"""Write an eBay listing for this item.
-
-ITEM (from photo analysis):
-{json.dumps(game_info, indent=2)}
-Completeness: {completeness}
-Tested and working: {"YES — seller confirmed" if tested else "NOT CONFIRMED — do not claim it was tested"}
-Seller's notes: {notes or "(none)"}
-
-PRICE GUIDE CANDIDATES (closest title matches — pick the row for the right variant, ignore wrong ones):
-{json.dumps(guide, indent=2) if guide else "(no match found)"}
-
-PRICING
-{research}
-- market_loose / market_cib: typical recent sold prices for this exact variant.
-- suggested_price: what it should sell for within about two weeks given its condition and
-  completeness. Don't undercut the market by more than ~5%; price above typical if condition is
-  notably better. End in .99 or .95. price_low / price_high: a sensible range.
-
-TITLE (max 80 characters — this is what buyers search):
-- Lead with the exact game title, then platform, then what matters to buyers: variant
-  (e.g. "Player's Choice"), completeness ("CIB", "Complete", "Cart Only", "Disc Only",
-  "w/ Manual"), region if not USA, "Authentic" (ONLY if authenticity is likely_authentic),
-  "Tested" (only if confirmed).
-- Use common search abbreviations when they save space (N64, SNES, NES, PS1, PS2, GBA, GC).
-- No ALL CAPS words except abbreviations, no emoji, no "L@@K", no "Rare" unless it genuinely is.
-
-DESCRIPTION (simple HTML: <p>, <ul>, <li>, <b> only, no styles or scripts):
-- One short paragraph: what it is (title, platform, region, variant).
-- A bullet list of at most 6 short bullets: what's included; condition specifics (the actual
-  wear, honestly); tested/working status only as stated above.
-- Only describe as included what the photo analysis says is there. If the item's flags question
-  whether something is present (a second disc, a manual), don't claim it — leave it out.
-- One line: "Ships quickly and well packed." Nothing salesy, no filler.
-- Don't mention photo-taking advice or anything addressed to the seller — buyers read this.
-
-condition: keep the photo grade unless the seller's notes clearly change it.
-flags: ONLY about pricing confidence (e.g. "Few sold comps — price is an estimate"). Never about
-the item itself — that's already covered. At most 2, under 15 words each. Usually empty."""
-    tools = ["WebSearch"] if web else []
-    return run_claude(prompt, LISTING_SCHEMA, cwd=workdir, tools=tools, usage=usage)
-
-
 def _clean_game_info(game_info: dict) -> dict:
     """Item specifics must be plain values: drop any "(…)" commentary the model adds."""
     for key in ("publisher", "genre", "rating", "mpn", "year"):
@@ -545,48 +528,79 @@ def _clean_game_info(game_info: dict) -> dict:
     return game_info
 
 
-def _clean_listing(listing: dict, game_info: dict) -> dict:
-    """Guard rails on model output before it reaches the UI or eBay."""
-    title = re.sub(r"\s+", " ", listing.get("title", "")).strip()
+def _clean_title(title: str, game_info: dict) -> str:
+    """Guard rails on the model's title before it reaches the UI or eBay."""
+    title = re.sub(r"\s+", " ", title or "").strip()
     if game_info.get("authenticity") != "likely_authentic":  # never claim what we can't back up
         title = re.sub(r"\s*\bAuthentic\b", "", title, flags=re.I).strip()
     if len(title) > 80:
         title = title[:80].rsplit(" ", 1)[0]
-    listing["title"] = title or game_info.get("game_title", "")[:80]
-    if listing.get("condition") not in CONDITIONS:
-        listing["condition"] = game_info.get("condition") if game_info.get("condition") in CONDITIONS else "USED_GOOD"
-    for key in ("suggested_price", "price_low", "price_high", "market_loose", "market_cib"):
-        try:
-            listing[key] = round(max(float(listing.get(key) or 0), 0), 2)
-        except (TypeError, ValueError):
-            listing[key] = 0.0
-    listing["suggested_price"] = max(listing["suggested_price"], 0.99)
-    listing["flags"] = list(dict.fromkeys(game_info.get("flags", [])[:4] + listing.get("flags", [])[:2]))
-    return listing
+    return title or game_info.get("game_title", "")[:80]
 
 
-def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: bool, web: bool, progress) -> dict:
-    """Full pipeline for one game. `progress(step)` reports identifying/pricing/generating."""
+def price_listing(game_info: dict) -> tuple[dict, list[str]]:
+    """PriceCharting price for what's actually included: complete in box → CIB, otherwise loose.
+    Returns (price_info, extra flags)."""
+    guide = pricecharting_api_matches(game_info["game_title"], game_info["platform"]) or \
+        price_guide_matches(game_info["game_title"], game_info["platform"])
+    row = pick_price_row(game_info, guide)
+    complete = game_info.get("has_game", True) and game_info.get("has_box") and game_info.get("has_manual")
+    basis = "CIB" if complete or game_info.get("condition") == "NEW" else "loose"
+    flags = []
+
+    if row:
+        loose, cib, source = row["loose"], row["cib"], row["source"]
+        price = cib if basis == "CIB" else loose
+        if not price:  # guide has no value for this completeness — use the other one
+            price, basis = (loose, "loose") if basis == "CIB" else (cib, "CIB")
+            flags.append(f"PriceCharting has no price for this completeness — used {basis}")
+        if game_info.get("variant") and not _split_variant(row["title"])[1]:
+            flags.append(f"{game_info['variant']} isn't a separate PriceCharting entry — priced as standard")
+        if game_info.get("condition") == "NEW":
+            flags.append("Sealed copy — priced at CIB; PriceCharting's new price is usually higher")
+        elif basis == "loose" and (game_info.get("has_box") or game_info.get("has_manual")):
+            flags.append("Partly complete — priced at loose; consider adding a little for the box/manual")
+    else:
+        loose = float(game_info.get("estimated_loose") or 0)
+        cib = float(game_info.get("estimated_cib") or 0)
+        price, source = (cib if basis == "CIB" else loose), "Claude estimate"
+        flags.append("Not in the price guide — price is Claude's estimate; check PriceCharting")
+
+    console = row["console"] if row else game_info["platform"]
+    return {
+        "loose_price": round(loose, 2), "cib_price": round(cib, 2),
+        "price": max(round(price, 2), 0.99), "basis": basis, "source": source,
+        "matched": row, "guide_matches": guide,
+        "url": row["url"] if row else pricecharting_link(game_info["game_title"], console),
+    }, flags
+
+
+def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: bool, progress) -> dict:
+    """Full pipeline for one game. `progress(step)` reports identifying/pricing."""
     progress("identifying")
     usage: dict = {}
-    game_info = _clean_game_info(identify_game(photo_dir, notes, tested, usage))
+    game_info = _clean_game_info(analyze_photos(photo_dir, notes, tested, usage))
 
     progress("pricing")
-    guide = price_guide_matches(game_info["game_title"], game_info["platform"])
-    guide += pricecharting_api_matches(game_info["game_title"], game_info["platform"])
-
-    progress("generating")
-    listing = _clean_listing(write_listing(game_info, guide, notes, tested, web, photo_dir, usage), game_info)
+    price_info, price_flags = price_listing(game_info)
+    matched = price_info["matched"]
+    listing = {
+        "title": _clean_title(game_info.pop("listing_title", ""), game_info),
+        "description": game_info.pop("listing_description", ""),
+        "condition": game_info["condition"] if game_info.get("condition") in CONDITIONS else "USED_GOOD",
+        "suggested_price": price_info["price"],
+        "price_reasoning": (f"PriceCharting {price_info['basis']} price for “{matched['title']}”"
+                            if matched else f"Claude's {price_info['basis']} estimate (not in the price guide)"),
+        "flags": list(dict.fromkeys(game_info.get("flags", [])[:4] + price_flags)),
+    }
     usage["total_tokens"] = usage["input"] + usage["cache_write"] + usage["cache_read"] + usage["output"]
     print(f"[usage] {game_info['game_title']}: {usage['total_tokens']:,} tokens "
           f"({usage['output']:,} output, {usage['cache_read']:,} cached), "
           f"{usage['seconds']}s, API-equivalent ${usage['api_equiv_usd']:.3f}")
 
-    price_source = "web + price guide" if web and listing["comps"] else "price guide" if guide else "Claude estimate"
     return {
         "game_info": game_info,
-        "price_info": {"loose_price": listing["market_loose"], "cib_price": listing["market_cib"],
-                       "source": price_source, "guide_matches": guide},
+        "price_info": price_info,
         "listing": listing,
         "photos": photo_refs,
         "usage": usage,
@@ -986,7 +1000,7 @@ def ebay_disconnect():
 @app.route("/")
 @require_pin
 def index():
-    return render_template("index.html", web_pricing_default=WEB_PRICING_DEFAULT, sandbox=EBAY_SANDBOX)
+    return render_template("index.html", sandbox=EBAY_SANDBOX)
 
 
 def _sse(event: dict) -> str:
@@ -998,7 +1012,7 @@ def _sse(event: dict) -> str:
 def analyze_batch():
     """Analyze one or more games, streaming progress as Server-Sent Events.
 
-    Form fields: game_count, game_{n}_photos (files), game_{n}_notes, tested, web_pricing.
+    Form fields: game_count, game_{n}_photos (files), game_{n}_notes, tested.
     Games run in parallel (ANALYZE_WORKERS at a time)."""
     try:
         game_count = int(request.form.get("game_count", 0))
@@ -1007,7 +1021,6 @@ def analyze_batch():
     if not 1 <= game_count <= 50:
         return jsonify({"error": "Send between 1 and 50 games"}), 400
     tested = request.form.get("tested", "true") == "true"
-    web = request.form.get("web_pricing", str(WEB_PRICING_DEFAULT).lower()) == "true"
 
     # Save every file now — the request body is gone once streaming starts
     batch_dir = UPLOAD_DIR / uuid.uuid4().hex
@@ -1027,7 +1040,7 @@ def analyze_batch():
                 events.put({"type": "error", "game": g, "error": game["error"]})
                 return
             try:
-                data = analyze_game(game["dir"], game["refs"], game["notes"], tested, web,
+                data = analyze_game(game["dir"], game["refs"], game["notes"], tested,
                                     progress=lambda step: events.put({"type": "progress", "game": g, "step": step}))
                 events.put({"type": "result", "game": g, "data": data})
             except Exception as e:
@@ -1089,7 +1102,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 cleanup_old_uploads()
 
 if __name__ == "__main__":
-    print(f"[startup] Claude CLI: {CLAUDE_BIN} (model: {CLAUDE_MODEL}, web pricing default: {WEB_PRICING_DEFAULT})")
+    print(f"[startup] Claude CLI: {CLAUDE_BIN} (model: {CLAUDE_MODEL})")
     if not shutil.which(CLAUDE_BIN):
         print("[startup] WARNING: `claude` not found on PATH — install Claude Code and log in")
     print(f"[startup] eBay: {'SANDBOX' if EBAY_SANDBOX else 'PRODUCTION'}, token available: {bool(get_ebay_token())}")

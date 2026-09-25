@@ -3,7 +3,7 @@
 Photograph a retro game → get an honest, well-priced eBay listing → publish it. Runs on your Mac and is used from your phone.
 
 - **Claude identifies and grades** each game from all your photos: exact title, variant (Player's Choice, Greatest Hits…), region, part number, what's included, visible wear, and whether it looks authentic.
-- **Prices** come from a local PriceCharting guide plus (optionally) recent sold comps researched online.
+- **Prices** are the PriceCharting loose or CIB value for exactly what you have (correct variant, e.g. Player's Choice).
 - **Flags** tell you what to double-check before you publish.
 - **Batch mode** analyzes several games in parallel.
 

@@ -1067,6 +1067,10 @@
     .ai-flags { list-style: none; margin: 6px 0; }
     .ai-flags li { padding-left: 18px; position: relative; margin: 3px 0; }
     .ai-flags li::before { content: '⚠'; position: absolute; left: 0; color: var(--accent2); }
+    .ai-price-source { margin: 6px 0; }
+    .ai-price-source a, .ai-comps a { color: var(--accent); }
+    .use-price { background: transparent; cursor: pointer; font-family: var(--font-mono); margin-left: 4px; }
+    .use-price:hover { color: var(--text); border-color: var(--accent); }
     .ai-comps { margin-top: 8px; }
     .ai-comps summary { cursor: pointer; color: var(--muted); }
     .ai-comps ul { list-style: none; margin-top: 6px; }
@@ -1118,7 +1122,6 @@
 
     <div class="options-row">
       <label><input type="checkbox" id="opt-tested" checked /> Tested &amp; working</label>
-      <label><input type="checkbox" id="opt-web" {% if web_pricing_default %}checked{% endif %} /> Research sold prices online (+~30s)</label>
     </div>
 
     <button class="btn-analyze" id="analyze-btn" disabled>
@@ -1138,9 +1141,9 @@
     </div>
 
     <div id="status-bar">
-      <div class="status-line" id="s1"><span class="dot"></span> Reading photos...</div>
-      <div class="status-line" id="s2"><span class="dot"></span> Checking price guide...</div>
-      <div class="status-line" id="s3"><span class="dot"></span> Writing listing...</div>
+      <div class="status-line" id="s1"><span class="dot"></span> Reading photos &amp; writing listing...</div>
+      <div class="status-line" id="s2"><span class="dot"></span> Looking up PriceCharting price...</div>
+      <div class="status-line" id="s3"><span class="dot"></span> Ready</div>
     </div>
 
     <div id="batch-progress"></div>
@@ -1333,7 +1336,7 @@
   ];
 
   // Remember the option checkboxes between visits
-  ['opt-tested', 'opt-web'].forEach(id => {
+  ['opt-tested'].forEach(id => {
     const el = document.getElementById(id);
     try {
       const saved = localStorage.getItem(id);
@@ -1342,38 +1345,52 @@
     el.addEventListener('change', () => { try { localStorage.setItem(id, el.checked); } catch (e) {} });
   });
 
-  // "What Claude thinks" panel: confidence, authenticity, flags, price comps
+  // "What Claude thinks" panel: confidence, authenticity, flags, and where the price came from
   function aiCheckHtml(data) {
     const { game_info: g, listing: l, price_info: p } = data;
     const conf = { high: 'good', medium: 'warn', low: 'bad' }[g.confidence] || '';
     const auth = { likely_authentic: ['good', 'Likely authentic'], uncertain: ['warn', 'Authenticity uncertain'],
                    likely_reproduction: ['bad', 'Possible reproduction'] }[g.authenticity] || ['', g.authenticity];
     const flags = (l.flags || []);
-    const comps = (l.comps || []).map(c => `<li><b>${money(c.price)}</b> — ${esc(c.note)}
-        <br>${c.url && /^https?:\/\//.test(c.url) ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.source)}</a>` : esc(c.source)}</li>`).join('');
-    const guide = (p.guide_matches || []).map(m => `<li><b>${esc(m.title)}</b> — loose ${money(m.loose)} · CIB ${money(m.cib)} <small>(${esc(m.source)})</small></li>`).join('');
+    const link = (url, text) => /^https:\/\/www\.pricecharting\.com\//.test(url || '')
+      ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
+    const priceBtn = (value, label) => value
+      ? `<button class="pill use-price" data-price="${value}" title="Use this price">${label} ${money(value)}</button>` : '';
+    // Other price-guide rows, one tap to use their price (in case the wrong variant was picked)
+    const guide = (p.guide_matches || []).map(m => `<li>${link(m.url, m.title)}
+        ${priceBtn(m.loose, 'Loose')} ${priceBtn(m.cib, 'CIB')}</li>`).join('');
+    const source = p.matched
+      ? `Priced at PriceCharting <b>${esc(p.basis)}</b>: ${link(p.url, p.matched.title)} <small>(${esc(p.source)})</small>`
+      : `Not in the price guide — Claude's ${esc(p.basis)} estimate. ${link(p.url, 'Check on PriceCharting ↗')}`;
     return `
       <div class="ai-check-head">
         <span class="pill ${conf}">ID confidence: ${esc(g.confidence)}</span>
         <span class="pill ${auth[0]}">${esc(auth[1])}</span>
         ${g.variant ? `<span class="pill">${esc(g.variant)}</span>` : ''}
-        <span class="pill">Range ${money(l.price_low)}–${money(l.price_high)}</span>
-        <span class="pill">Prices: ${esc(p.source)}</span>
       </div>
+      <div class="ai-price-source">${source}</div>
       ${g.authenticity !== 'likely_authentic' && g.authenticity_notes ? `<div>${esc(g.authenticity_notes)}</div>` : ''}
       ${flags.length ? `<ul class="ai-flags">${flags.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : '<div style="color:var(--green)">✓ Nothing flagged</div>'}
-      ${comps ? `<details class="ai-comps"><summary>Sold comps (${l.comps.length})</summary><ul>${comps}</ul></details>` : ''}
-      ${guide ? `<details class="ai-comps"><summary>Price guide matches</summary><ul>${guide}</ul></details>` : ''}
+      ${guide ? `<details class="ai-comps"><summary>Wrong version? Other PriceCharting matches</summary><ul>${guide}</ul></details>` : ''}
       ${data.usage ? `<div style="margin-top:8px;color:var(--muted);font-size:0.65rem">Claude: ${data.usage.total_tokens.toLocaleString()} tokens
         (${data.usage.output.toLocaleString()} written) · ${data.usage.seconds}s</div>` : ''}`;
   }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.use-price');
+    if (!btn) return;
+    const card = btn.closest('.batch-card');
+    const input = card ? card.querySelector('[data-field="price"]') : document.getElementById('edit-price');
+    input.value = parseFloat(btn.dataset.price).toFixed(2);
+    if (!card) document.getElementById('r-suggested-price').textContent = money(btn.dataset.price);
+    showToast(`Price set to ${money(btn.dataset.price)}`);
+  });
 
   // POST games to /analyze-batch and call onEvent for each streamed event
   async function streamAnalyze(games, onEvent) {
     const formData = new FormData();
     formData.append('game_count', games.length);
     formData.append('tested', document.getElementById('opt-tested').checked);
-    formData.append('web_pricing', document.getElementById('opt-web').checked);
     games.forEach((game, g) => {
       game.files.forEach(f => formData.append(`game_${g}_photos`, f));
       formData.append(`game_${g}_notes`, game.notes);
@@ -1675,12 +1692,8 @@
     statusBar.style.display = 'block';
     results.style.display = 'none';
     ['s1', 's2', 's3'].forEach(id => setStatus(id, ''));
-    const webOn = document.getElementById('opt-web').checked;
-    const stepToStatus = { identifying: 's1', pricing: 's2', generating: 's3' };
-    const labels = {
-      s1: 'Reading photos...', s2: 'Checking price guide...',
-      s3: webOn ? 'Researching sold prices & writing listing...' : 'Writing listing...',
-    };
+    const stepToStatus = { identifying: 's1', pricing: 's2' };
+    const labels = { s1: 'Reading photos &amp; writing listing...', s2: 'Looking up PriceCharting price...' };
     let failed = false;
 
     try {
@@ -1692,8 +1705,8 @@
         } else if (evt.type === 'result') {
           const data = evt.data;
           setStatus('s1', 'done', `✓ ${esc(data.game_info.game_title)} (${esc(data.game_info.platform)})`);
-          setStatus('s2', 'done', `✓ Market: loose ${money(data.price_info.loose_price)} · CIB ${money(data.price_info.cib_price)}`);
-          setStatus('s3', 'done', `✓ Listing ready at ${money(data.listing.suggested_price)}`);
+          setStatus('s2', 'done', `✓ PriceCharting: loose ${money(data.price_info.loose_price)} · CIB ${money(data.price_info.cib_price)}`);
+          setStatus('s3', 'done', `✓ Listing ready at ${money(data.listing.suggested_price)} (${esc(data.price_info.basis)})`);
           currentData = data;
           populateResults(data);
           setTimeout(() => {
@@ -1936,7 +1949,7 @@
       batchProgressEl.appendChild(row);
     }
 
-    const stepText = { identifying: 'Reading photos...', pricing: 'Price guide...', generating: 'Writing listing...' };
+    const stepText = { identifying: 'Reading photos...', pricing: 'PriceCharting...' };
     try {
       await streamAnalyze(batchQueue, (evt) => {
         const row = document.getElementById(`bp-${evt.game}`);
