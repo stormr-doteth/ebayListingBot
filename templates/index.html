@@ -440,6 +440,22 @@
 
     .platform-input:focus { outline: 2px solid var(--accent); }
 
+    /* Both header fields also carry .field-input (declared later), so pin their layout here */
+    .game-card-header { gap: 12px; }
+    .game-card-header .game-title-input.field-input {
+      flex: 1; width: auto; min-width: 0;
+      background: transparent; border: 1px solid transparent; border-bottom: 1px solid var(--border);
+      border-radius: 0; font-family: var(--font-display); font-size: 22px; padding: 4px 0;
+    }
+    .game-card-header .platform-input.field-input {
+      flex: 0 0 140px; width: 140px;
+      background: var(--accent2); color: #000; border: none; font-size: 11px; padding: 6px 10px;
+    }
+    @media (max-width: 480px) {
+      .game-card-header { flex-direction: column; }
+      .game-card-header .platform-input.field-input { flex-basis: auto; }
+    }
+
     /* Price row */
     .price-row {
       display: flex;
@@ -998,15 +1014,61 @@
 
     .ebay-status-text { color: var(--muted); }
 
+    /* ── Analysis options ── */
+    .options-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin: 12px 0 4px;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .options-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .options-row input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+    /* ── AI check panel (confidence, flags, comps) ── */
+    .ai-check {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      font-size: 0.75rem;
+      line-height: 1.5;
+    }
+    .ai-check-head { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .pill {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .pill.good { color: var(--green); border-color: rgba(57,255,20,0.4); }
+    .pill.warn { color: var(--accent2); border-color: rgba(255,204,0,0.4); }
+    .pill.bad  { color: #ff4444; border-color: rgba(255,68,68,0.5); }
+    .ai-flags { list-style: none; margin: 6px 0; }
+    .ai-flags li { padding-left: 18px; position: relative; margin: 3px 0; }
+    .ai-flags li::before { content: '⚠'; position: absolute; left: 0; color: var(--accent2); }
+    .ai-comps { margin-top: 8px; }
+    .ai-comps summary { cursor: pointer; color: var(--muted); }
+    .ai-comps ul { list-style: none; margin-top: 6px; }
+    .ai-comps li { margin: 4px 0; color: var(--muted); }
+    .ai-comps li b { color: var(--text); }
+    .ai-comps a { color: var(--accent); }
+    .batch-card-flags { color: var(--accent2); font-size: 0.7rem; white-space: nowrap; }
+
   </style>
 </head>
 <body>
 
 <div class="container">
   <header>
-    <div class="header-tag">// retro game lister v1.2</div>
+    <div class="header-tag">// retro game lister v2.0{% if sandbox %} · SANDBOX{% endif %}</div>
     <h1>Retro<span>List</span></h1>
-    <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude.</p>
+    <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude, running on your Mac.</p>
     <div class="ebay-status-row" style="display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap;">
       <div class="ebay-status" id="ebay-status">
         <span class="ebay-dot disconnected" id="ebay-dot"></span>
@@ -1026,14 +1088,19 @@
       <span class="drop-icon">📷</span>
       <div class="drop-text">
         <strong>Drop photos here or tap to shoot</strong>
-        First photo used for ID — add more for listing gallery
+        Every photo is analyzed — add the back, label and box for a better ID. First photo leads the eBay gallery.
       </div>
     </div>
 
     <div id="thumb-strip"></div>
 
     <div class="notes-wrap">
-      <textarea id="extra-notes" placeholder="Any extra notes? e.g. 'label has small tear top-right, cartridge works perfectly, tested on my N64'"></textarea>
+      <textarea id="extra-notes" placeholder="Any extra notes? e.g. 'label has small tear top-right, saves work, new battery'"></textarea>
+    </div>
+
+    <div class="options-row">
+      <label><input type="checkbox" id="opt-tested" checked /> Tested &amp; working</label>
+      <label><input type="checkbox" id="opt-web" {% if web_pricing_default %}checked{% endif %} /> Research sold prices online (+~30s)</label>
     </div>
 
     <button class="btn-analyze" id="analyze-btn" disabled>
@@ -1053,9 +1120,9 @@
     </div>
 
     <div id="status-bar">
-      <div class="status-line" id="s1"><span class="dot"></span> Identifying game...</div>
-      <div class="status-line" id="s2"><span class="dot"></span> Checking market prices...</div>
-      <div class="status-line" id="s3"><span class="dot"></span> Generating listing...</div>
+      <div class="status-line" id="s1"><span class="dot"></span> Reading photos...</div>
+      <div class="status-line" id="s2"><span class="dot"></span> Checking price guide...</div>
+      <div class="status-line" id="s3"><span class="dot"></span> Writing listing...</div>
     </div>
 
     <div id="batch-progress"></div>
@@ -1078,6 +1145,8 @@
   <div id="results">
     <hr class="divider" />
     <div class="section-label">// 02 — Review & Edit</div>
+
+    <div class="ai-check" id="ai-check"></div>
 
     <!-- Game info card (all fields editable) -->
     <div class="game-card" id="game-card">
@@ -1202,6 +1271,95 @@
 <div id="toast">✅ Listed on eBay!</div>
 
 <script>
+  // ── Helpers ─────────────────────────────
+  // Escape model/user text before putting it in innerHTML
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const money = (n) => `$${(parseFloat(n) || 0).toFixed(2)}`;
+
+  const CONDITIONS = [
+    ['NEW', 'New / Sealed'], ['LIKE_NEW', 'Like New'], ['USED_EXCELLENT', 'Excellent'],
+    ['USED_VERY_GOOD', 'Very Good'], ['USED_GOOD', 'Good'], ['USED_ACCEPTABLE', 'Acceptable'],
+  ];
+
+  // Remember the option checkboxes between visits
+  ['opt-tested', 'opt-web'].forEach(id => {
+    const el = document.getElementById(id);
+    try {
+      const saved = localStorage.getItem(id);
+      if (saved !== null) el.checked = saved === 'true';
+    } catch (e) {}
+    el.addEventListener('change', () => { try { localStorage.setItem(id, el.checked); } catch (e) {} });
+  });
+
+  // "What Claude thinks" panel: confidence, authenticity, flags, price comps
+  function aiCheckHtml(data) {
+    const { game_info: g, listing: l, price_info: p } = data;
+    const conf = { high: 'good', medium: 'warn', low: 'bad' }[g.confidence] || '';
+    const auth = { likely_authentic: ['good', 'Likely authentic'], uncertain: ['warn', 'Authenticity uncertain'],
+                   likely_reproduction: ['bad', 'Possible reproduction'] }[g.authenticity] || ['', g.authenticity];
+    const flags = (l.flags || []);
+    const comps = (l.comps || []).map(c => `<li><b>${money(c.price)}</b> — ${esc(c.note)}
+        <br>${c.url && /^https?:\/\//.test(c.url) ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.source)}</a>` : esc(c.source)}</li>`).join('');
+    const guide = (p.guide_matches || []).map(m => `<li><b>${esc(m.title)}</b> — loose ${money(m.loose)} · CIB ${money(m.cib)} <small>(${esc(m.source)})</small></li>`).join('');
+    return `
+      <div class="ai-check-head">
+        <span class="pill ${conf}">ID confidence: ${esc(g.confidence)}</span>
+        <span class="pill ${auth[0]}">${esc(auth[1])}</span>
+        ${g.variant ? `<span class="pill">${esc(g.variant)}</span>` : ''}
+        <span class="pill">Range ${money(l.price_low)}–${money(l.price_high)}</span>
+        <span class="pill">Prices: ${esc(p.source)}</span>
+      </div>
+      ${g.authenticity !== 'likely_authentic' && g.authenticity_notes ? `<div>${esc(g.authenticity_notes)}</div>` : ''}
+      ${flags.length ? `<ul class="ai-flags">${flags.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : '<div style="color:var(--green)">✓ Nothing flagged</div>'}
+      ${comps ? `<details class="ai-comps"><summary>Sold comps (${l.comps.length})</summary><ul>${comps}</ul></details>` : ''}
+      ${guide ? `<details class="ai-comps"><summary>Price guide matches</summary><ul>${guide}</ul></details>` : ''}`;
+  }
+
+  // POST games to /analyze-batch and call onEvent for each streamed event
+  async function streamAnalyze(games, onEvent) {
+    const formData = new FormData();
+    formData.append('game_count', games.length);
+    formData.append('tested', document.getElementById('opt-tested').checked);
+    formData.append('web_pricing', document.getElementById('opt-web').checked);
+    games.forEach((game, g) => {
+      game.files.forEach(f => formData.append(`game_${g}_photos`, f));
+      formData.append(`game_${g}_notes`, game.notes);
+    });
+
+    const resp = await fetch('/analyze-batch', { method: 'POST', body: formData });
+    if (resp.status === 401) { location.reload(); return; }
+    if (resp.status === 413) throw new Error('Photos too large — try fewer at once');
+    if (!resp.ok || !resp.body) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `Server error (${resp.status})`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();  // keep incomplete line
+      for (const line of lines) {
+        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)));
+      }
+    }
+  }
+
+  async function postJson(url, payload) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 401) { location.reload(); throw new Error('Not logged in'); }
+    return resp.json();
+  }
+
   // ── eBay Connection ─────────────────────
   async function checkEbayStatus() {
     try {
@@ -1221,12 +1379,8 @@
       } else if (data.status === 'legacy') {
         dot.classList.add('legacy');
         text.textContent = 'eBay Token (manual)';
-        if (data.oauth_configured) {
-          connectBtn.style.display = '';
-          connectBtn.textContent = 'Upgrade to OAuth';
-        } else {
-          connectBtn.style.display = 'none';
-        }
+        connectBtn.style.display = data.oauth_configured ? '' : 'none';
+        connectBtn.textContent = 'Upgrade to OAuth';
         disconnectBtn.style.display = 'none';
       } else if (data.status === 'expired') {
         dot.classList.add('disconnected');
@@ -1250,7 +1404,6 @@
     checkEbayStatus();
   }
 
-  // Check on load
   checkEbayStatus();
 
   // ── State ──────────────────────────────
@@ -1260,7 +1413,7 @@
 
   // Batch state
   let batchQueue = [];    // Array of {files: File[], notes: string, thumbUrl: string}
-  let batchResults = [];  // Array of analysis results from SSE
+  let batchResults = [];  // Analysis results by game index
 
   // ── Elements ───────────────────────────
   const photoInput = document.getElementById('photo-input');
@@ -1348,14 +1501,14 @@
       if (i === 0) {
         const badge = document.createElement('div');
         badge.className = 'thumb-badge';
-        badge.textContent = 'ID Photo';
+        badge.textContent = 'Main';
         item.appendChild(badge);
       }
 
       thumbStrip.appendChild(item);
     });
 
-    // Add "+" button to add more photos
+    // "+" button to add more photos
     const addMore = document.createElement('div');
     addMore.className = 'thumb-item';
     addMore.style.cssText = 'display:flex;align-items:center;justify-content:center;cursor:pointer;border-style:dashed;';
@@ -1372,127 +1525,129 @@
     counter.className = 'char-count' + (len > 80 ? ' over' : '');
   });
 
-  // ── Condition buttons ──────────────────
+  // ── Condition buttons (single-game form) ──
   document.getElementById('condition-grid').addEventListener('click', (e) => {
     const btn = e.target.closest('.condition-btn');
     if (!btn) return;
-    document.querySelectorAll('.condition-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#condition-grid .condition-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     selectedCondition = btn.dataset.val;
   });
 
-  // ── Analyze ────────────────────────────
+  // ── Analyze (single game) ──────────────
   analyzeBtn.addEventListener('click', async () => {
     if (selectedFiles.length === 0) return;
-
-    const formData = new FormData();
-    selectedFiles.forEach(f => formData.append('photos', f));
-    formData.append('notes', document.getElementById('extra-notes').value);
 
     analyzeBtn.disabled = true;
     analyzeBtn.textContent = 'Analyzing...';
     statusBar.style.display = 'block';
     results.style.display = 'none';
-
-    setStatus('s1', 'active');
+    ['s1', 's2', 's3'].forEach(id => setStatus(id, ''));
+    const webOn = document.getElementById('opt-web').checked;
+    const stepToStatus = { identifying: 's1', pricing: 's2', generating: 's3' };
+    const labels = {
+      s1: 'Reading photos...', s2: 'Checking price guide...',
+      s3: webOn ? 'Researching sold prices & writing listing...' : 'Writing listing...',
+    };
+    let failed = false;
 
     try {
-      const resp = await fetch('/analyze', { method: 'POST', body: formData });
-      const data = await resp.json();
-
-      if (data.error) throw new Error(data.error);
-
-      setStatus('s1', 'done', `✓ Found: ${data.game_info.game_title}`);
-      setStatus('s2', 'done', `✓ Loose $${data.price_info.loose_price.toFixed(2)} | CIB $${data.price_info.cib_price.toFixed(2)}`);
-      setStatus('s3', 'done', `✓ Listing generated at $${data.listing.suggested_price}`);
-
-      currentData = data;
-      populateResults(data);
-
-      setTimeout(() => {
-        results.style.display = 'block';
-        results.scrollIntoView({ behavior: 'smooth' });
-      }, 400);
-
+      await streamAnalyze([{ files: selectedFiles, notes: document.getElementById('extra-notes').value }], (evt) => {
+        if (evt.type === 'progress') {
+          const id = stepToStatus[evt.step];
+          ['s1', 's2', 's3'].forEach(s => { if (s < id) setStatus(s, 'done'); });
+          setStatus(id, 'active', labels[id]);
+        } else if (evt.type === 'result') {
+          const data = evt.data;
+          setStatus('s1', 'done', `✓ ${esc(data.game_info.game_title)} (${esc(data.game_info.platform)})`);
+          setStatus('s2', 'done', `✓ Market: loose ${money(data.price_info.loose_price)} · CIB ${money(data.price_info.cib_price)}`);
+          setStatus('s3', 'done', `✓ Listing ready at ${money(data.listing.suggested_price)}`);
+          currentData = data;
+          populateResults(data);
+          setTimeout(() => {
+            results.style.display = 'block';
+            results.scrollIntoView({ behavior: 'smooth' });
+          }, 300);
+        } else if (evt.type === 'error') {
+          failed = true;
+          setStatus('s1', 'error', `✗ ${esc(evt.error)}`);
+        }
+      });
     } catch (err) {
-      setStatus('s1', 'error', `✗ Error: ${err.message}`);
+      failed = true;
+      setStatus('s1', 'error', `✗ Error: ${esc(err.message)}`);
     } finally {
       analyzeBtn.disabled = false;
-      analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
+      analyzeBtn.textContent = failed ? '⚡ Try Again' : '⚡ Analyze & Generate Listing';
     }
   });
 
-  function setStatus(id, state, text) {
+  function setStatus(id, state, html) {
     const el = document.getElementById(id);
     el.className = `status-line ${state}`;
-    const dot = el.querySelector('.dot');
-    dot.className = 'dot' + (state === 'active' ? ' pulse' : '');
-    if (text) el.innerHTML = `<span class="dot"></span> ${text}`;
+    if (html) el.innerHTML = `<span class="dot"></span> ${html}`;
+    el.querySelector('.dot').className = 'dot' + (state === 'active' ? ' pulse' : '');
+  }
+
+  function includesText(g) {
+    return [g.has_game !== false && (g.item_type === 'disc' ? 'Disc' : 'Game'),
+            g.has_manual && 'Manual', g.has_box && 'Box/Case',
+            ...(g.extras || [])].filter(Boolean).join(', ');
   }
 
   function populateResults(data) {
     const { game_info, price_info, listing } = data;
 
+    document.getElementById('ai-check').innerHTML = aiCheckHtml(data);
     document.getElementById('r-game-title').value = game_info.game_title || '';
     document.getElementById('r-platform').value = game_info.platform || '';
     document.getElementById('r-year').value = game_info.year || '';
     document.getElementById('r-region').value = game_info.region || '';
-
-    const includes = [
-      'Cartridge',
-      game_info.has_manual && 'Manual',
-      game_info.has_box && 'Box'
-    ].filter(Boolean).join(', ');
-    document.getElementById('r-includes').value = includes;
+    document.getElementById('r-includes').value = includesText(game_info);
     document.getElementById('r-condition-notes').value = game_info.condition_notes || '';
     document.getElementById('r-publisher').value = game_info.publisher || '';
     document.getElementById('r-genre').value = game_info.genre || '';
     document.getElementById('r-rating').value = game_info.rating || '';
     document.getElementById('r-mpn').value = game_info.mpn || '';
 
-    document.getElementById('r-loose-price').textContent =
-      price_info.loose_price ? `$${price_info.loose_price.toFixed(2)}` : 'N/A';
-    document.getElementById('r-cib-price').textContent =
-      price_info.cib_price ? `$${price_info.cib_price.toFixed(2)}` : 'N/A';
-    document.getElementById('r-suggested-price').textContent =
-      `$${listing.suggested_price.toFixed(2)}`;
+    document.getElementById('r-loose-price').textContent = price_info.loose_price ? money(price_info.loose_price) : 'N/A';
+    document.getElementById('r-cib-price').textContent = price_info.cib_price ? money(price_info.cib_price) : 'N/A';
+    document.getElementById('r-suggested-price').textContent = money(listing.suggested_price);
 
     editTitle.value = listing.title;
-    document.getElementById('edit-description').value = listing.description;
     editTitle.dispatchEvent(new Event('input'));
+    document.getElementById('edit-description').value = listing.description;
+    editPrice.value = (parseFloat(listing.suggested_price) || 0).toFixed(2);
 
-    editPrice.value = listing.suggested_price.toFixed(2);
-
-    // Smart weight default: ~4oz loose cart, ~12oz CIB
-    const hasBox = game_info.has_box;
-    document.getElementById('edit-weight').value = hasBox ? 12 : 4;
-
+    // Weight default: ~4oz loose cart/disc, ~12oz boxed
+    document.getElementById('edit-weight').value = game_info.has_box ? 12 : 4;
     document.getElementById('price-reasoning').textContent = listing.price_reasoning || '';
 
-    // Set condition button
-    document.querySelectorAll('.condition-btn').forEach(b => {
+    document.querySelectorAll('#condition-grid .condition-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.val === listing.condition);
     });
     selectedCondition = listing.condition;
   }
 
   // ── Description preview ────────────────
-  document.getElementById('preview-desc-btn').addEventListener('click', () => {
-    if (!currentData) return;
-    document.getElementById('desc-preview-content').innerHTML =
-      document.getElementById('edit-description').value;
+  function previewDescription(html) {
+    document.getElementById('desc-preview-content').innerHTML = html;
     document.getElementById('desc-modal').classList.add('open');
+  }
+
+  document.getElementById('preview-desc-btn').addEventListener('click', () => {
+    if (currentData) previewDescription(document.getElementById('edit-description').value);
   });
 
   document.getElementById('modal-close').addEventListener('click', () => {
     document.getElementById('desc-modal').classList.remove('open');
   });
 
-  // ── Publish ────────────────────────────
+  // ── Publish (single game) ──────────────
   publishBtn.addEventListener('click', async () => {
     if (!currentData) return;
 
-    // Read edited game info fields
+    const includes = document.getElementById('r-includes').value;
     const editedGameInfo = {
       ...currentData.game_info,
       game_title: document.getElementById('r-game-title').value,
@@ -1504,35 +1659,33 @@
       genre: document.getElementById('r-genre').value,
       rating: document.getElementById('r-rating').value,
       mpn: document.getElementById('r-mpn').value,
+      has_manual: /manual/i.test(includes),
+      has_box: /box|case/i.test(includes),
     };
 
     const payload = {
       game_info: editedGameInfo,
-      image_paths: currentData.image_paths || [],
+      photos: currentData.photos || [],
       listing: {
         ...currentData.listing,
-        title: editTitle.value,
+        title: editTitle.value.trim(),
         description: document.getElementById('edit-description').value,
         suggested_price: parseFloat(editPrice.value),
         condition: selectedCondition,
-        weight_oz: parseFloat(document.getElementById('edit-weight').value) || 8
-      }
+        weight_oz: parseFloat(document.getElementById('edit-weight').value) || 8,
+      },
     };
 
     publishBtn.disabled = true;
     publishBtn.textContent = 'Publishing...';
 
     try {
-      const resp = await fetch('/publish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await resp.json();
-
+      const result = await postJson('/publish', payload);
       if (result.success) {
         showToast(`✅ Listed! ID: ${result.listing_id}`);
-        publishBtn.textContent = '✓ Published!';
+        publishBtn.textContent = '✓ Published — view on eBay';
+        publishBtn.disabled = false;
+        publishBtn.onclick = () => window.open(result.url, '_blank');
       } else {
         showToast('✗ Publish failed');
         publishBtn.textContent = '🚀 Publish to eBay';
@@ -1553,53 +1706,44 @@
     setTimeout(() => { toast.style.display = 'none'; }, 4000);
   }
 
-  // ── Reset (single game) ────────────────
-  document.getElementById('reset-btn').addEventListener('click', () => {
-    currentData = null;
+  // ── Reset ──────────────────────────────
+  function resetUploadZone() {
     selectedFiles = [];
-    results.style.display = 'none';
-    statusBar.style.display = 'none';
     thumbStrip.innerHTML = '';
     thumbStrip.classList.remove('has-items');
     dropZone.style.display = 'block';
     photoInput.value = '';
     analyzeBtn.disabled = true;
     addBatchBtn.disabled = true;
+    document.getElementById('extra-notes').value = '';
+  }
+
+  function resetSingle() {
+    currentData = null;
+    resetUploadZone();
+    results.style.display = 'none';
+    statusBar.style.display = 'none';
     analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
     publishBtn.disabled = false;
+    publishBtn.onclick = null;
     publishBtn.textContent = '🚀 Publish to eBay';
-    document.getElementById('extra-notes').value = '';
-    document.querySelectorAll('#s1,#s2,#s3').forEach(el => {
-      el.className = 'status-line';
-      el.querySelector('.dot').className = 'dot';
-    });
+    ['s1', 's2', 's3'].forEach(id => setStatus(id, ''));
+  }
+
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    resetSingle();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
   // ── Batch: Add to Queue ───────────────
   addBatchBtn.addEventListener('click', () => {
     if (selectedFiles.length === 0) return;
-
-    // Create a thumbnail URL from the first file
-    const thumbUrl = URL.createObjectURL(selectedFiles[0]);
-    const notes = document.getElementById('extra-notes').value;
-
     batchQueue.push({
       files: [...selectedFiles],
-      notes: notes,
-      thumbUrl: thumbUrl
+      notes: document.getElementById('extra-notes').value,
+      thumbUrl: URL.createObjectURL(selectedFiles[0]),
     });
-
-    // Reset upload zone for next game
-    selectedFiles = [];
-    thumbStrip.innerHTML = '';
-    thumbStrip.classList.remove('has-items');
-    dropZone.style.display = 'block';
-    photoInput.value = '';
-    analyzeBtn.disabled = true;
-    addBatchBtn.disabled = true;
-    document.getElementById('extra-notes').value = '';
-
+    resetUploadZone();
     renderBatchQueue();
   });
 
@@ -1625,7 +1769,6 @@
       queueList.appendChild(row);
     });
 
-    // Remove handlers
     queueList.querySelectorAll('.queue-item-remove').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const idx = parseInt(e.currentTarget.dataset.idx);
@@ -1638,26 +1781,13 @@
     analyzeBatchBtn.textContent = `⚡ Analyze All (${batchQueue.length} game${batchQueue.length > 1 ? 's' : ''})`;
   }
 
-  // ── Batch: Analyze All (SSE) ──────────
+  // ── Batch: Analyze All ────────────────
   analyzeBatchBtn.addEventListener('click', async () => {
+    // Photos still in the upload zone count as one more game
+    if (selectedFiles.length > 0) addBatchBtn.click();
     if (batchQueue.length === 0) return;
-
-    // If there are unsaved photos in the upload zone, add them to queue first
-    if (selectedFiles.length > 0) {
-      addBatchBtn.click();
-    }
-
     const totalGames = batchQueue.length;
 
-    // Build FormData with all games
-    const formData = new FormData();
-    formData.append('game_count', totalGames);
-    for (let g = 0; g < totalGames; g++) {
-      batchQueue[g].files.forEach(f => formData.append(`game_${g}_photos`, f));
-      formData.append(`game_${g}_notes`, batchQueue[g].notes);
-    }
-
-    // Show progress UI
     analyzeBatchBtn.disabled = true;
     analyzeBatchBtn.textContent = 'Analyzing...';
     batchProgressEl.style.display = 'block';
@@ -1665,73 +1795,47 @@
     batchResultsEl.style.display = 'none';
     batchResults = [];
 
-    // Create progress rows
     for (let g = 0; g < totalGames; g++) {
       const row = document.createElement('div');
       row.className = 'batch-progress-row';
       row.id = `bp-${g}`;
-      row.innerHTML = `<span class="dot"></span> Game ${g + 1} — waiting...
+      row.innerHTML = `<span class="dot"></span> Game ${g + 1} — queued
         <span class="batch-progress-step" id="bp-step-${g}"></span>`;
       batchProgressEl.appendChild(row);
     }
 
+    const stepText = { identifying: 'Reading photos...', pricing: 'Price guide...', generating: 'Writing listing...' };
     try {
-      const resp = await fetch('/analyze-batch', { method: 'POST', body: formData });
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const evt = JSON.parse(line.slice(6));
-
-          if (evt.type === 'progress') {
-            const row = document.getElementById(`bp-${evt.game}`);
-            row.className = 'batch-progress-row active';
-            row.querySelector('.dot').className = 'dot pulse';
-            const stepText = { identifying: 'Identifying...', pricing: 'Pricing...', generating: 'Generating...' };
-            document.getElementById(`bp-step-${evt.game}`).textContent = stepText[evt.step] || '';
-          }
-
-          if (evt.type === 'result') {
-            const row = document.getElementById(`bp-${evt.game}`);
-            const title = evt.data.game_info.game_title || 'Unknown';
-            row.className = 'batch-progress-row done';
-            row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — ${title}
-              <span class="batch-progress-step">✓</span>`;
-            batchResults[evt.game] = evt.data;
-          }
-
-          if (evt.type === 'error') {
-            const row = document.getElementById(`bp-${evt.game}`);
-            row.className = 'batch-progress-row error';
-            row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — Error: ${evt.error}
-              <span class="batch-progress-step">✗</span>`;
-          }
-
-          if (evt.type === 'done') {
-            renderBatchResults();
-          }
+      await streamAnalyze(batchQueue, (evt) => {
+        const row = document.getElementById(`bp-${evt.game}`);
+        if (evt.type === 'progress') {
+          row.className = 'batch-progress-row active';
+          row.querySelector('.dot').className = 'dot pulse';
+          document.getElementById(`bp-step-${evt.game}`).textContent = stepText[evt.step] || '';
+        } else if (evt.type === 'result') {
+          const { game_info: g, listing: l } = evt.data;
+          row.className = 'batch-progress-row done';
+          row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — ${esc(g.game_title)}
+            <span class="batch-progress-step">${l.flags.length ? `⚠ ${l.flags.length}` : '✓'}</span>`;
+          batchResults[evt.game] = evt.data;
+        } else if (evt.type === 'error') {
+          row.className = 'batch-progress-row error';
+          row.innerHTML = `<span class="dot"></span> Game ${evt.game + 1} — ${esc(evt.error)}
+            <span class="batch-progress-step">✗</span>`;
+        } else if (evt.type === 'done') {
+          renderBatchResults();
         }
-      }
+      });
     } catch (err) {
-      batchProgressEl.innerHTML += `<div class="batch-progress-row error"><span class="dot"></span> Batch error: ${err.message}</div>`;
+      batchProgressEl.insertAdjacentHTML('beforeend',
+        `<div class="batch-progress-row error"><span class="dot"></span> Batch error: ${esc(err.message)}</div>`);
     }
 
     analyzeBatchBtn.disabled = false;
     analyzeBatchBtn.textContent = `⚡ Analyze All (${totalGames} game${totalGames > 1 ? 's' : ''})`;
   });
 
-  // ── Batch: Render result cards ────────
+  // ── Batch: Result cards ───────────────
   function renderBatchResults() {
     batchCardsEl.innerHTML = '';
     if (batchResults.filter(Boolean).length === 0) return;
@@ -1739,75 +1843,72 @@
 
     batchResults.forEach((data, i) => {
       if (!data) return;
-      const { game_info, price_info, listing } = data;
+      const { game_info: g, listing: l } = data;
       const card = document.createElement('div');
       card.className = 'batch-card';
       card.dataset.idx = i;
-
       const thumbSrc = batchQueue[i] ? batchQueue[i].thumbUrl : '';
+      const metaField = (field, label) =>
+        `<div class="meta-item"><div class="meta-label">${label}</div><input type="text" class="meta-input" data-field="${field}" value="${esc(g[field])}" /></div>`;
 
       card.innerHTML = `
         <div class="batch-card-summary">
           <input type="checkbox" class="batch-card-checkbox" data-idx="${i}" checked />
           <img class="batch-card-thumb" src="${thumbSrc}" alt="" />
           <div class="batch-card-title">
-            <strong>${listing.title || game_info.game_title}</strong>
-            <small>${game_info.platform} · ${game_info.year || ''}</small>
+            <strong>${esc(l.title || g.game_title)}</strong>
+            <small>${esc(g.platform)} · ${esc(g.year)}</small>
           </div>
-          <span class="batch-card-price">$${parseFloat(listing.suggested_price).toFixed(2)}</span>
+          ${l.flags.length ? `<span class="batch-card-flags">⚠ ${l.flags.length}</span>` : ''}
+          <span class="batch-card-price">${money(l.suggested_price)}</span>
           <span class="batch-card-expand">▼</span>
         </div>
         <div class="batch-card-details">
+          <div class="ai-check">${aiCheckHtml(data)}</div>
           <div class="game-meta">
-            <div class="meta-item"><div class="meta-label">Publisher</div><input type="text" class="meta-input" data-field="publisher" value="${game_info.publisher || ''}" /></div>
-            <div class="meta-item"><div class="meta-label">Genre</div><input type="text" class="meta-input" data-field="genre" value="${game_info.genre || ''}" /></div>
-            <div class="meta-item"><div class="meta-label">Rating</div><input type="text" class="meta-input" data-field="rating" value="${game_info.rating || ''}" /></div>
-            <div class="meta-item"><div class="meta-label">MPN</div><input type="text" class="meta-input" data-field="mpn" value="${game_info.mpn || ''}" /></div>
-            <div class="meta-item"><div class="meta-label">Region</div><input type="text" class="meta-input" data-field="region" value="${game_info.region || ''}" /></div>
-            <div class="meta-item"><div class="meta-label">Condition</div><input type="text" class="meta-input" data-field="condition_notes" value="${game_info.condition_notes || ''}" /></div>
+            ${metaField('publisher', 'Publisher')}${metaField('genre', 'Genre')}${metaField('rating', 'Rating')}
+            ${metaField('mpn', 'MPN')}${metaField('region', 'Region')}${metaField('condition_notes', 'Condition')}
           </div>
           <div class="field-group">
             <div class="field-label">eBay Title</div>
-            <input type="text" class="field-input" data-field="title" maxlength="80" value="${(listing.title || '').replace(/"/g, '&quot;')}" />
+            <input type="text" class="field-input" data-field="title" maxlength="80" value="${esc(l.title)}" />
           </div>
           <div class="field-group">
             <div class="field-label">Condition Grade</div>
-            <div class="condition-grid batch-condition-grid" data-idx="${i}">
-              <button class="condition-btn${listing.condition === 'NEW' ? ' active' : ''}" data-val="NEW">New / Sealed</button>
-              <button class="condition-btn${listing.condition === 'LIKE_NEW' ? ' active' : ''}" data-val="LIKE_NEW">Like New</button>
-              <button class="condition-btn${listing.condition === 'USED_EXCELLENT' ? ' active' : ''}" data-val="USED_EXCELLENT">Excellent</button>
-              <button class="condition-btn${listing.condition === 'USED_VERY_GOOD' ? ' active' : ''}" data-val="USED_VERY_GOOD">Very Good</button>
-              <button class="condition-btn${listing.condition === 'USED_GOOD' ? ' active' : ''}" data-val="USED_GOOD">Good</button>
-              <button class="condition-btn${listing.condition === 'USED_ACCEPTABLE' ? ' active' : ''}" data-val="USED_ACCEPTABLE">Acceptable</button>
+            <div class="condition-grid batch-condition-grid">
+              ${CONDITIONS.map(([val, label]) =>
+                `<button class="condition-btn${l.condition === val ? ' active' : ''}" data-val="${val}">${label}</button>`).join('')}
             </div>
           </div>
           <div class="field-group">
             <div class="field-label">Weight (oz)</div>
-            <input type="number" class="field-input" data-field="weight_oz" step="0.1" min="1" value="${game_info.has_box ? 12 : 4}" />
+            <input type="number" class="field-input" data-field="weight_oz" step="0.1" min="1" value="${g.has_box ? 12 : 4}" />
           </div>
           <div class="field-group">
             <div class="field-label">Price (USD)</div>
             <div class="price-input-wrap">
               <span>$</span>
-              <input type="number" class="field-input" data-field="price" step="0.01" min="0.99" value="${parseFloat(listing.suggested_price).toFixed(2)}" style="padding-left:28px" />
+              <input type="number" class="field-input" data-field="price" step="0.01" min="0.99" value="${(parseFloat(l.suggested_price) || 0).toFixed(2)}" style="padding-left:28px" />
             </div>
-            <div class="char-count">${listing.price_reasoning || ''}</div>
+            <div class="char-count">${esc(l.price_reasoning)}</div>
+          </div>
+          <div class="field-group">
+            <div class="field-label">Description <span style="color:var(--muted);font-size:0.7rem">(HTML)</span></div>
+            <textarea class="field-input" data-field="description" rows="5" style="resize:vertical;min-height:80px;font-size:0.75rem;line-height:1.4">${esc(l.description)}</textarea>
+            <button class="btn-preview batch-preview-btn" style="margin-top:8px">👁 Preview Description</button>
           </div>
         </div>
       `;
       batchCardsEl.appendChild(card);
     });
 
-    // Toggle expand/collapse
     batchCardsEl.querySelectorAll('.batch-card-summary').forEach(summary => {
       summary.addEventListener('click', (e) => {
-        if (e.target.classList.contains('batch-card-checkbox')) return; // don't toggle on checkbox click
-        const card = summary.closest('.batch-card');
-        card.classList.toggle('open');
+        if (e.target.classList.contains('batch-card-checkbox')) return;
+        summary.closest('.batch-card').classList.toggle('open');
       });
     });
 
-    // Condition buttons inside batch cards
     batchCardsEl.querySelectorAll('.batch-condition-grid').forEach(grid => {
       grid.addEventListener('click', (e) => {
         const btn = e.target.closest('.condition-btn');
@@ -1817,108 +1918,92 @@
       });
     });
 
-    updatePublishBatchCount();
+    batchCardsEl.querySelectorAll('.batch-preview-btn').forEach(btn => {
+      btn.addEventListener('click', () =>
+        previewDescription(btn.closest('.batch-card').querySelector('[data-field="description"]').value));
+    });
 
-    // Checkbox changes update count
     batchCardsEl.querySelectorAll('.batch-card-checkbox').forEach(cb => {
       cb.addEventListener('change', updatePublishBatchCount);
     });
+    updatePublishBatchCount();
 
-    setTimeout(() => {
-      batchResultsEl.scrollIntoView({ behavior: 'smooth' });
-    }, 200);
+    setTimeout(() => batchResultsEl.scrollIntoView({ behavior: 'smooth' }), 200);
   }
 
   function updatePublishBatchCount() {
-    const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked').length;
+    const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked:not(:disabled)').length;
     publishBatchBtn.textContent = `Publish Selected (${checked})`;
     publishBatchBtn.disabled = checked === 0;
   }
 
   // ── Batch: Publish Selected ───────────
   publishBatchBtn.addEventListener('click', async () => {
-    const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked');
+    const checked = Array.from(batchCardsEl.querySelectorAll('.batch-card-checkbox:checked:not(:disabled)'));
     if (checked.length === 0) return;
 
     publishBatchBtn.disabled = true;
     publishBatchBtn.textContent = 'Publishing...';
 
-    const games = [];
-    checked.forEach(cb => {
-      const idx = parseInt(cb.dataset.idx);
-      const data = batchResults[idx];
-      if (!data) return;
-
-      const card = cb.closest('.batch-card');
-      const details = card.querySelector('.batch-card-details');
-
-      // Read edited fields from card
-      const getField = (name) => {
-        const input = details.querySelector(`[data-field="${name}"]`);
-        return input ? input.value : '';
-      };
-
+    const games = checked.map(cb => {
+      const data = batchResults[parseInt(cb.dataset.idx)];
+      const details = cb.closest('.batch-card').querySelector('.batch-card-details');
+      const getField = (name) => (details.querySelector(`[data-field="${name}"]`) || {}).value || '';
       const activeCondBtn = details.querySelector('.batch-condition-grid .condition-btn.active');
-      const condition = activeCondBtn ? activeCondBtn.dataset.val : data.listing.condition;
 
-      const editedGameInfo = {
-        ...data.game_info,
-        publisher: getField('publisher'),
-        genre: getField('genre'),
-        rating: getField('rating'),
-        mpn: getField('mpn'),
-        region: getField('region'),
-        condition_notes: getField('condition_notes'),
-      };
-
-      games.push({
-        game_info: editedGameInfo,
-        image_paths: data.image_paths,
+      return {
+        photos: data.photos,
+        game_info: {
+          ...data.game_info,
+          publisher: getField('publisher'),
+          genre: getField('genre'),
+          rating: getField('rating'),
+          mpn: getField('mpn'),
+          region: getField('region'),
+          condition_notes: getField('condition_notes'),
+        },
         listing: {
           ...data.listing,
-          title: getField('title'),
+          title: getField('title').trim(),
+          description: getField('description'),
           suggested_price: parseFloat(getField('price')) || data.listing.suggested_price,
-          condition: condition,
+          condition: activeCondBtn ? activeCondBtn.dataset.val : data.listing.condition,
           weight_oz: parseFloat(getField('weight_oz')) || 8,
-        }
-      });
+        },
+      };
     });
 
     try {
-      const resp = await fetch('/publish-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ games })
-      });
-      const result = await resp.json();
-
-      // Update card statuses
+      const result = await postJson('/publish-batch', { games });
       let successCount = 0;
       result.results.forEach((r, ri) => {
-        // Find the card matching this game
-        const checkboxes = Array.from(checked);
-        if (ri >= checkboxes.length) return;
-        const card = checkboxes[ri].closest('.batch-card');
-        const summary = card.querySelector('.batch-card-summary');
-
+        const cb = checked[ri];
+        const card = cb.closest('.batch-card');
+        const badge = document.createElement(r.success ? 'a' : 'span');
         if (r.success) {
           card.classList.add('published');
-          const badge = document.createElement('span');
           badge.className = 'batch-card-status success';
           badge.textContent = `Listed #${r.listing_id}`;
-          summary.appendChild(badge);
+          badge.href = r.url;
+          badge.target = '_blank';
+          cb.checked = false;
+          cb.disabled = true;  // don't publish twice
           successCount++;
         } else {
           card.classList.add('publish-failed');
-          const badge = document.createElement('span');
           badge.className = 'batch-card-status failed';
           badge.textContent = 'Failed';
-          summary.appendChild(badge);
+          badge.title = r.error;
+          const err = document.createElement('div');
+          err.className = 'char-count over';
+          err.textContent = r.error;
+          card.querySelector('.batch-card-details').prepend(err);
         }
+        card.querySelector('.batch-card-summary').appendChild(badge);
       });
 
       showToast(`Published ${successCount}/${result.results.length} games`);
-      publishBatchBtn.textContent = `✓ Published ${successCount}/${result.results.length}`;
+      updatePublishBatchCount();
     } catch (err) {
       showToast('Batch publish error');
       publishBatchBtn.textContent = 'Publish Selected';
@@ -1937,19 +2022,7 @@
     batchResultsEl.style.display = 'none';
     batchCardsEl.innerHTML = '';
     renderBatchQueue();
-
-    // Reset upload zone
-    currentData = null;
-    selectedFiles = [];
-    results.style.display = 'none';
-    statusBar.style.display = 'none';
-    thumbStrip.innerHTML = '';
-    thumbStrip.classList.remove('has-items');
-    dropZone.style.display = 'block';
-    photoInput.value = '';
-    analyzeBtn.disabled = true;
-    addBatchBtn.disabled = true;
-    document.getElementById('extra-notes').value = '';
+    resetSingle();
     publishBatchBtn.disabled = false;
     publishBatchBtn.textContent = 'Publish Selected (0)';
     window.scrollTo({ top: 0, behavior: 'smooth' });
