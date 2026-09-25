@@ -1075,6 +1075,7 @@
         <span class="ebay-status-text" id="ebay-status-text">Checking eBay...</span>
       </div>
       <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:var(--accent); color:#000; font-weight:700; cursor:pointer;">Connect eBay</button>
+      <button id="ebay-paste-btn" onclick="pasteEbayLink()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:transparent; color:var(--accent); cursor:pointer;">Paste eBay link</button>
       <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">Disconnect</button>
     </div>
   </header>
@@ -1369,6 +1370,8 @@
       const text = document.getElementById('ebay-status-text');
       const connectBtn = document.getElementById('ebay-connect-btn');
       const disconnectBtn = document.getElementById('ebay-disconnect-btn');
+      const pasteBtn = document.getElementById('ebay-paste-btn');
+      connectBtn.textContent = 'Connect eBay';
 
       dot.className = 'ebay-dot';
       if (data.status === 'active' || data.status === 'needs_refresh') {
@@ -1382,6 +1385,11 @@
         connectBtn.style.display = data.oauth_configured ? '' : 'none';
         connectBtn.textContent = 'Upgrade to OAuth';
         disconnectBtn.style.display = 'none';
+      } else if (data.status === 'legacy_expired') {
+        dot.classList.add('disconnected');
+        text.textContent = data.oauth_configured ? 'eBay token expired — Connect eBay' : 'eBay token expired — see CLAUDE.md';
+        connectBtn.style.display = data.oauth_configured ? '' : 'none';
+        disconnectBtn.style.display = 'none';
       } else if (data.status === 'expired') {
         dot.classList.add('disconnected');
         text.textContent = 'eBay Expired — Reconnect';
@@ -1393,9 +1401,25 @@
         connectBtn.style.display = data.oauth_configured ? '' : 'none';
         disconnectBtn.style.display = 'none';
       }
+      // After approving on eBay you land on an https page this local app can't receive;
+      // pasting that address here finishes the connection.
+      pasteBtn.style.display = connectBtn.style.display;
     } catch (e) {
       console.error('eBay status check failed:', e);
     }
+  }
+
+  async function pasteEbayLink() {
+    const url = prompt('After approving on eBay, copy the full address of the page you landed on and paste it here:');
+    if (!url) return;
+    try {
+      const result = await postJson('/ebay/code', { url });
+      if (result.success) showToast('✅ eBay connected');
+      else alert(result.error);
+    } catch (e) {
+      alert('Could not connect eBay: ' + e.message);
+    }
+    checkEbayStatus();
   }
 
   async function disconnectEbay() {

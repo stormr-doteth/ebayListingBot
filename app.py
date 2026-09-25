@@ -17,10 +17,11 @@ import re
 import shutil
 import secrets
 import subprocess
+import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 from xml.sax.saxutils import escape as xml_escape
 
 import requests
@@ -32,6 +33,7 @@ import pillow_heif
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
+sys.stdout.reconfigure(line_buffering=True)  # show log lines immediately, even when redirected
 pillow_heif.register_heif_opener()
 
 
@@ -591,6 +593,40 @@ def _refresh_access_token(refresh_token: str) -> dict:
     return token_data
 
 
+def _exchange_auth_code(code: str):
+    """Swap an OAuth authorization code for access + refresh tokens and save them."""
+    resp = requests.post(f"{EBAY_BASE_URL}/identity/v1/oauth2/token", headers=_ebay_basic_auth(), timeout=15,
+                         data={"grant_type": "authorization_code", "code": code,
+                               "redirect_uri": EBAY_REDIRECT_URI})
+    if resp.status_code != 200:
+        raise RuntimeError(_ebay_error("eBay token exchange failed", resp))
+    token_resp = resp.json()
+    _save_token_data({
+        "access_token": token_resp["access_token"],
+        "expires_at": time.time() + token_resp.get("expires_in", 7200) - 300,
+        "refresh_token": token_resp.get("refresh_token", ""),
+        "refresh_expires_at": time.time() + token_resp.get("refresh_token_expires_in", 47304000),
+        "connected_at": time.time(),
+    })
+    print("[oauth] eBay connected")
+
+
+_legacy_check = {"at": 0.0, "valid": True}
+
+
+def legacy_token_valid() -> bool:
+    """Static .env tokens expire after ~2 hours. Ask eBay (cached 5 min) instead of assuming."""
+    if time.time() - _legacy_check["at"] > 300:
+        try:
+            resp = requests.get(f"{EBAY_BASE_URL}/sell/account/v1/fulfillment_policy",
+                                params={"marketplace_id": "EBAY_US"}, timeout=10,
+                                headers={"Authorization": f"Bearer {EBAY_TOKEN_LEGACY}"})
+            _legacy_check.update(at=time.time(), valid=resp.status_code != 401)
+        except requests.RequestException:
+            return True  # network hiccup — don't claim it's expired
+    return _legacy_check["valid"]
+
+
 def get_ebay_token() -> str:
     """A valid eBay access token: saved OAuth token (auto-refreshed), else the static .env token."""
     token_data = _load_token_data()
@@ -609,8 +645,8 @@ def get_ebay_token() -> str:
 #  eBay publishing
 # ─────────────────────────────────────────
 
-def upload_to_ebay_eps(image_path: Path, token: str) -> str:
-    """Upload one image via Trading API UploadSiteHostedPictures, return its ebayimg.com URL."""
+def upload_to_ebay_eps(image_path: Path, token: str) -> tuple[str, str]:
+    """Upload one image via Trading API UploadSiteHostedPictures. Returns (ebayimg.com URL, error)."""
     headers = {
         "X-EBAY-API-SITEID": "0",
         "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
@@ -629,19 +665,23 @@ def upload_to_ebay_eps(image_path: Path, token: str) -> str:
         text = requests.post(f"{EBAY_BASE_URL}/ws/api.dll", headers=headers, files=files, timeout=60).text
         match = re.search(r"<FullURL>(.*?)</FullURL>", text)
         if match:
-            return match.group(1)
-        print(f"[eps] No FullURL in response: {text[:300]}")
+            return match.group(1), ""
+        error = re.search(r"<LongMessage>(.*?)</LongMessage>", text)
+        error = error.group(1) if error else text[:200]
     except Exception as e:
-        print(f"[eps] Upload error: {e}")
-    return ""
+        error = str(e)
+    print(f"[eps] Upload failed for {image_path.name}: {error}")
+    return "", error
 
 
-def upload_photos(photo_refs: list[str], token: str) -> list[str]:
-    """Upload a listing's photos in parallel, keeping their order."""
+def upload_photos(photo_refs: list[str], token: str) -> tuple[list[str], str]:
+    """Upload a listing's photos in parallel, keeping their order. Returns (urls, first error)."""
     paths = [p for p in (resolve_photo(r) for r in photo_refs[:24]) if p]  # eBay allows 24
+    if not paths:
+        return [], "photos not found on the server (older than the cleanup window?) — analyze again"
     with ThreadPoolExecutor(max_workers=4) as pool:
-        urls = list(pool.map(lambda p: upload_to_ebay_eps(p, token), paths))
-    return [u for u in urls if u]
+        results = list(pool.map(lambda p: upload_to_ebay_eps(p, token), paths))
+    return [url for url, _ in results if url], next((err for _, err in results if err), "")
 
 
 REGION_CODES = {"USA": "NTSC-U/C (US/Canada)", "PAL": "PAL", "Japan": "NTSC-J (Japan)"}
@@ -698,9 +738,10 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     if not title or len(title) > 80:
         return {"success": False, "error": "Title must be 1–80 characters"}
 
-    image_urls = upload_photos(photo_refs, token)
+    image_urls, upload_error = upload_photos(photo_refs, token)
     if not image_urls:
-        return {"success": False, "error": "Photo upload to eBay failed (check token permissions)"}
+        hint = " — your eBay login has expired, tap Connect eBay" if "token" in upload_error.lower() else ""
+        return {"success": False, "error": f"Photo upload to eBay failed: {upload_error}{hint}"}
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -818,23 +859,29 @@ def ebay_callback():
         return f"<h2>eBay Auth Error</h2><p>{escape(error)}</p><a href='/'>Back to app</a>", 400
 
     try:
-        resp = requests.post(f"{EBAY_BASE_URL}/identity/v1/oauth2/token", headers=_ebay_basic_auth(), timeout=15,
-                             data={"grant_type": "authorization_code", "code": code,
-                                   "redirect_uri": EBAY_REDIRECT_URI})
-        resp.raise_for_status()
-        token_resp = resp.json()
+        _exchange_auth_code(code)
     except Exception as e:
         return f"<h2>Token Exchange Failed</h2><pre>{escape(str(e))}</pre><a href='/'>Back to app</a>", 500
-
-    _save_token_data({
-        "access_token": token_resp["access_token"],
-        "expires_at": time.time() + token_resp.get("expires_in", 7200) - 300,
-        "refresh_token": token_resp.get("refresh_token", ""),
-        "refresh_expires_at": time.time() + token_resp.get("refresh_token_expires_in", 47304000),
-        "connected_at": time.time(),
-    })
-    print("[oauth] eBay connected")
     return redirect(url_for("index"))
+
+
+@app.route("/ebay/code", methods=["POST"])
+@require_pin
+def ebay_code():
+    """Finish OAuth by pasting the URL eBay redirected to. eBay only redirects to https
+    addresses, which a local http app can't receive — so the user copies it over instead."""
+    pasted = ((request.get_json(silent=True) or {}).get("url") or "").strip()
+    query = parse_qs(urlparse(pasted).query) if "?" in pasted else {}
+    code = (query.get("code") or [""])[0]
+    if not code:
+        return jsonify({"success": False, "error": "No code found in that link — copy the full address after approving on eBay"}), 400
+    if (query.get("state") or [""])[0] != session.pop("oauth_state", None):
+        return jsonify({"success": False, "error": "That link is from an older attempt — tap Connect eBay and try again"}), 400
+    try:
+        _exchange_auth_code(code)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    return jsonify({"success": True})
 
 
 @app.route("/ebay/status")
@@ -850,8 +897,10 @@ def ebay_status():
         else:
             status = "active"
         return jsonify({"connected": status != "expired", "status": status, "oauth_configured": oauth_configured})
-    return jsonify({"connected": bool(EBAY_TOKEN_LEGACY), "status": "legacy" if EBAY_TOKEN_LEGACY else "disconnected",
-                    "oauth_configured": oauth_configured})
+    if EBAY_TOKEN_LEGACY:
+        status = "legacy" if legacy_token_valid() else "legacy_expired"
+        return jsonify({"connected": status == "legacy", "status": status, "oauth_configured": oauth_configured})
+    return jsonify({"connected": False, "status": "disconnected", "oauth_configured": oauth_configured})
 
 
 @app.route("/ebay/disconnect", methods=["POST"])
