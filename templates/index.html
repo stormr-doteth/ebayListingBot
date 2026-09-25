@@ -815,6 +815,26 @@
 
     .queue-item-remove:hover { border-color: #ff4444; color: #ff4444; }
 
+    /* Photo-dump groups: thumbnails with split / merge controls */
+    .queue-item { align-items: flex-start; }
+    .queue-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .queue-thumb { position: relative; }
+    .queue-thumb img { width: 52px; height: 52px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); display: block; }
+    .queue-split {
+      position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
+      width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; line-height: 1;
+    }
+    .queue-split:hover { color: var(--accent); border-color: var(--accent); }
+    .queue-actions { display: flex; flex-direction: column; gap: 6px; }
+    .queue-hint { font-size: 11px; color: var(--muted); margin: -4px 0 10px; }
+    .btn-sort-dump {
+      width: 100%; margin-top: 10px; padding: 14px; background: transparent; color: var(--accent2);
+      border: 1px solid rgba(255,204,0,0.5); border-radius: 4px; font-family: var(--font-mono);
+      font-size: 13px; cursor: pointer;
+    }
+    .btn-sort-dump:disabled { opacity: 0.4; cursor: not-allowed; }
+
     .btn-analyze-batch {
       width: 100%;
       margin-top: 16px;
@@ -1110,7 +1130,7 @@
       <span class="drop-icon">📷</span>
       <div class="drop-text">
         <strong>Drop photos here or tap to shoot</strong>
-        Every photo is analyzed — add the back, label and box for a better ID. First photo leads the eBay gallery.
+        One game: add its front, back, label and box. Lots of games: select every photo and tap “Sort photo dump”.
       </div>
     </div>
 
@@ -1128,12 +1148,17 @@
       ⚡ Analyze & Generate Listing
     </button>
 
+    <button class="btn-sort-dump" id="sort-dump-btn" disabled title="Pick lots of photos of several games at once — Claude splits them into one listing per game">
+      🧠 Sort photo dump into games
+    </button>
+
     <button class="btn-add-batch" id="add-batch-btn" disabled>
       + Add to Batch
     </button>
 
     <div id="batch-queue">
       <div class="queue-header">Batch Queue</div>
+      <div class="queue-hint">Check the groups: ✂ starts a new game at that photo, ⤒ merges a game into the one above.</div>
       <div class="queue-list" id="queue-list"></div>
       <button class="btn-analyze-batch" id="analyze-batch-btn">
         ⚡ Analyze All (0 games)
@@ -1392,7 +1417,8 @@
     formData.append('game_count', games.length);
     formData.append('tested', document.getElementById('opt-tested').checked);
     games.forEach((game, g) => {
-      game.files.forEach(f => formData.append(`game_${g}_photos`, f));
+      if (game.refs) formData.append(`game_${g}_refs`, JSON.stringify(game.refs));  // already on the Mac
+      else game.files.forEach(f => formData.append(`game_${g}_photos`, f));
       formData.append(`game_${g}_notes`, game.notes);
     });
 
@@ -1561,7 +1587,7 @@
   let selectedFiles = [];  // Array of File objects
 
   // Batch state
-  let batchQueue = [];    // Array of {files: File[], notes: string, thumbUrl: string}
+  let batchQueue = [];    // Array of {files: File[], refs?: string[] (already uploaded), notes, item?, thumbUrls: string[]}
   let batchResults = [];  // Analysis results by game index
 
   // ── Elements ───────────────────────────
@@ -1570,6 +1596,7 @@
   const thumbStrip = document.getElementById('thumb-strip');
   const analyzeBtn = document.getElementById('analyze-btn');
   const addBatchBtn = document.getElementById('add-batch-btn');
+  const sortDumpBtn = document.getElementById('sort-dump-btn');
   const batchQueueEl = document.getElementById('batch-queue');
   const queueList = document.getElementById('queue-list');
   const analyzeBatchBtn = document.getElementById('analyze-batch-btn');
@@ -1611,11 +1638,13 @@
     renderThumbs();
     analyzeBtn.disabled = false;
     addBatchBtn.disabled = false;
+    sortDumpBtn.disabled = selectedFiles.length < 2;
   }
 
   function removeFile(index) {
     selectedFiles.splice(index, 1);
     renderThumbs();
+    sortDumpBtn.disabled = selectedFiles.length < 2;
     if (selectedFiles.length === 0) {
       analyzeBtn.disabled = true;
       addBatchBtn.disabled = true;
@@ -1860,6 +1889,7 @@
     photoInput.value = '';
     analyzeBtn.disabled = true;
     addBatchBtn.disabled = true;
+    sortDumpBtn.disabled = true;
     document.getElementById('extra-notes').value = '';
   }
 
@@ -1881,16 +1911,75 @@
   });
 
   // ── Batch: Add to Queue ───────────────
+  const makeGroup = (files, extra = {}) => ({
+    files, notes: '', thumbUrls: files.map(f => URL.createObjectURL(f)), ...extra,
+  });
+  const dropGroup = (group) => group.thumbUrls.forEach(u => URL.revokeObjectURL(u));
+
   addBatchBtn.addEventListener('click', () => {
     if (selectedFiles.length === 0) return;
-    batchQueue.push({
-      files: [...selectedFiles],
-      notes: document.getElementById('extra-notes').value,
-      thumbUrl: URL.createObjectURL(selectedFiles[0]),
-    });
+    batchQueue.push(makeGroup([...selectedFiles], { notes: document.getElementById('extra-notes').value }));
     resetUploadZone();
     renderBatchQueue();
   });
+
+  // ── Photo dump: sort many photos into one group per game ──
+  sortDumpBtn.addEventListener('click', async () => {
+    const files = [...selectedFiles];
+    if (files.length < 2) return;
+    if (files.length > 60) { alert('Up to 60 photos at a time — split your dump into a few rounds.'); return; }
+
+    const formData = new FormData();
+    files.forEach(f => formData.append('photos', f));
+    formData.append('modified', JSON.stringify(files.map(f => f.lastModified || 0)));
+    sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = true;
+    sortDumpBtn.textContent = `Uploading & sorting ${files.length} photos... (~30–60s)`;
+
+    try {
+      const resp = await fetch('/group-photos', { method: 'POST', body: formData });
+      if (resp.status === 401) { location.reload(); return; }
+      if (resp.status === 413) throw new Error('Too much data at once — try fewer photos per dump');
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || `Server error (${resp.status})`);
+
+      const notes = document.getElementById('extra-notes').value;
+      data.groups.forEach(g => batchQueue.push(makeGroup(g.photos.map(p => files[p.index]), {
+        refs: g.photos.map(p => p.ref), item: g.item, notes,
+      })));
+      resetUploadZone();
+      renderBatchQueue();
+      showToast(`Found ${data.groups.length} game${data.groups.length === 1 ? '' : 's'} — check the groups`);
+      batchQueueEl.scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+      alert('Sorting failed: ' + err.message);
+      sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = false;
+    } finally {
+      sortDumpBtn.textContent = '🧠 Sort photo dump into games';
+    }
+  });
+
+  // ✂ at photo j: photos j.. become a new game right after this one
+  function splitGroup(i, j) {
+    const g = batchQueue[i];
+    const tail = { files: g.files.slice(j), thumbUrls: g.thumbUrls.slice(j), notes: g.notes,
+                   refs: g.refs && g.refs.slice(j), item: '' };
+    g.files = g.files.slice(0, j);
+    g.thumbUrls = g.thumbUrls.slice(0, j);
+    if (g.refs) g.refs = g.refs.slice(0, j);
+    batchQueue.splice(i + 1, 0, tail);
+    renderBatchQueue();
+  }
+
+  // ⤒ merge game i into the one above it
+  function mergeUp(i) {
+    const above = batchQueue[i - 1], g = batchQueue[i];
+    above.files = above.files.concat(g.files);
+    above.thumbUrls = above.thumbUrls.concat(g.thumbUrls);
+    above.refs = above.refs && g.refs ? above.refs.concat(g.refs) : undefined;  // mixed → re-upload files
+    above.notes = [above.notes, g.notes].filter(Boolean).join(' ');
+    batchQueue.splice(i, 1);
+    renderBatchQueue();
+  }
 
   function renderBatchQueue() {
     queueList.innerHTML = '';
@@ -1903,25 +1992,37 @@
     batchQueue.forEach((item, i) => {
       const row = document.createElement('div');
       row.className = 'queue-item';
+      const thumbs = item.thumbUrls.map((url, j) => `
+        <div class="queue-thumb">
+          <img src="${url}" alt="" />
+          ${j > 0 ? `<button class="queue-split" data-idx="${i}" data-photo="${j}" title="New game starts at this photo">✂</button>` : ''}
+        </div>`).join('');
       row.innerHTML = `
-        <img class="queue-item-thumb" src="${item.thumbUrl}" alt="Game ${i + 1}" />
         <div class="queue-item-info">
-          <strong>Game ${i + 1}</strong>
+          <strong>Game ${i + 1}${item.item ? ` · ${esc(item.item)}` : ''}</strong>
           ${item.files.length} photo${item.files.length > 1 ? 's' : ''}${item.notes ? ' · has notes' : ''}
+          <div class="queue-thumbs">${thumbs}</div>
         </div>
-        <button class="queue-item-remove" data-idx="${i}">✕</button>
+        <div class="queue-actions">
+          <button class="queue-item-remove" data-idx="${i}" title="Remove this game">✕</button>
+          ${i > 0 ? `<button class="queue-item-remove queue-merge" data-idx="${i}" title="Merge into the game above">⤒</button>` : ''}
+        </div>
       `;
       queueList.appendChild(row);
     });
 
-    queueList.querySelectorAll('.queue-item-remove').forEach(btn => {
+    queueList.querySelectorAll('.queue-item-remove:not(.queue-merge)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const idx = parseInt(e.currentTarget.dataset.idx);
-        URL.revokeObjectURL(batchQueue[idx].thumbUrl);
+        dropGroup(batchQueue[idx]);
         batchQueue.splice(idx, 1);
         renderBatchQueue();
       });
     });
+    queueList.querySelectorAll('.queue-merge').forEach(btn =>
+      btn.addEventListener('click', (e) => mergeUp(parseInt(e.currentTarget.dataset.idx))));
+    queueList.querySelectorAll('.queue-split').forEach(btn =>
+      btn.addEventListener('click', (e) => splitGroup(parseInt(e.currentTarget.dataset.idx), parseInt(e.currentTarget.dataset.photo))));
 
     analyzeBatchBtn.textContent = `⚡ Analyze All (${batchQueue.length} game${batchQueue.length > 1 ? 's' : ''})`;
   }
@@ -1992,7 +2093,7 @@
       const card = document.createElement('div');
       card.className = 'batch-card';
       card.dataset.idx = i;
-      const thumbSrc = batchQueue[i] ? batchQueue[i].thumbUrl : '';
+      const thumbSrc = batchQueue[i] ? batchQueue[i].thumbUrls[0] : '';
       const metaField = (field, label) =>
         `<div class="meta-item"><div class="meta-label">${label}</div><input type="text" class="meta-input" data-field="${field}" value="${esc(g[field])}" /></div>`;
 
@@ -2158,7 +2259,7 @@
 
   // ── Batch: Reset ──────────────────────
   document.getElementById('batch-reset-btn').addEventListener('click', () => {
-    batchQueue.forEach(item => URL.revokeObjectURL(item.thumbUrl));
+    batchQueue.forEach(dropGroup);
     batchQueue = [];
     batchResults = [];
     batchQueueEl.classList.remove('has-items');

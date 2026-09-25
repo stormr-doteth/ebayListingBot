@@ -5,6 +5,7 @@ Photograph a retro game → get an honest, well-priced eBay listing → publish 
 - **Claude identifies and grades** each game from all your photos: exact title, variant (Player's Choice, Greatest Hits…), region, part number, what's included, visible wear, and whether it looks authentic.
 - **Prices** are the PriceCharting loose or CIB value for exactly what you have (correct variant, e.g. Player's Choice).
 - **Flags** tell you what to double-check before you publish.
+- **Photo dump**: select every photo of a pile of games at once — it sorts them by when they were taken and splits them into one listing per game (you can fix any split before analyzing).
 - **Batch mode** analyzes several games in parallel.
 
 AI runs through the [Claude Code](https://claude.com/claude-code) CLI on your own Mac, so it uses your Claude plan instead of a paid API key.

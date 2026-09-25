@@ -62,6 +62,13 @@ Per game, run in a thread pool and streamed to the browser as SSE (`/analyze-bat
 3. **`price_listing()`** — pricing is deterministic, not Claude's call: PriceCharting API rows if `PRICECHARTING_API_KEY` is set, else the local CSV. `pick_price_row()` chooses the row for the exact variant (uses the variant field, listing title and MPN suffix like `GH`). Game + box + manual → **CIB** price; anything less → **loose**. Not in the guide → Claude's estimate, flagged.
 4. **`_clean_game_info()` / `_clean_title()`** — guard rails: plain item-specific values, 80-char title, strip "Authentic" unless authenticity is `likely_authentic`.
 
+**Photo dump** (`/group-photos`): up to 60 photos of many games at once. They're saved once, sorted by EXIF capture
+time (fallback: file lastModified, then upload order) and renumbered, then ONE `claude -p` call (effort `medium` —
+`low` mis-grouped a back photo in testing) sees numbered contact sheets (20 per sheet, ≤3 sheets) and returns groups
+(`group_photos()`, repaired so every photo lands in exactly one group). The browser shows the groups in the batch
+queue (✂ split / ⤒ merge) and `/analyze-batch` then receives `game_{n}_refs` instead of re-uploading files —
+`_link_photos()` hard-links each group's photos into its own game folder. ~30–40s and ~30k tokens for 20 photos.
+
 The UI shows which PriceCharting row was used (linked) and the other candidate rows with one-tap Loose/CIB price buttons.
 
 Claude CLI safety: `--tools Read` only, and Read is *not* pre-approved so it only works inside the game's photo folder; `--setting-sources ""` ignores personal settings/hooks; `--no-session-persistence` keeps these runs out of session history. Photo text is treated as data (system prompt says so).
@@ -74,6 +81,7 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
 | `/` | GET | Main UI |
 | `/login` | GET/POST | PIN login (rate-limited: 5 tries / 5 min per IP) |
 | `/analyze-batch` | POST | FormData `game_count`, `game_{n}_photos`, `game_{n}_notes`, `tested` → SSE `progress` / `result` / `error` / `done`. Used for single games too (count = 1). |
+| `/group-photos` | POST | Photo dump: `photos` + `modified` (JSON lastModified list) → `{groups: [{item, photos: [{ref, index}]}]}` |
 | `/publish` | POST | JSON `{listing, game_info, photos}` → `{success, listing_id, url}` or `{success: false, error}` |
 | `/publish-batch` | POST | JSON `{games: [...]}` → `{results: [...]}` |
 | `/ebay/auth`, `/ebay/callback` | GET | OAuth consent flow (with `state` check) |

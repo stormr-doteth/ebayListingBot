@@ -120,7 +120,7 @@ def _load_secret_key() -> str:
 
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # batch: many games x several phone photos
+app.config["MAX_CONTENT_LENGTH"] = 400 * 1024 * 1024  # photo dumps: up to 60 full-size phone photos
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.secret_key = _load_secret_key()
 
@@ -289,20 +289,37 @@ def pricecharting_api_matches(game_title: str, platform: str, limit: int = 3) ->
 #  Photos
 # ─────────────────────────────────────────
 
-def save_photos(files, dest: Path) -> list[str]:
+def _taken_at(img: Image.Image) -> str:
+    """Capture time from EXIF ("2026:09:25 12:02:31.123"), or "" if the photo has none."""
+    try:
+        exif = img.getexif()
+        sub = exif.get_ifd(0x8769)                      # Exif sub-IFD
+        stamp = sub.get(36867) or exif.get(306) or ""   # DateTimeOriginal, else DateTime
+        fraction = sub.get(37521) or ""                 # SubSecTimeOriginal (bursts in one second)
+        return f"{stamp}.{fraction}" if stamp and fraction else str(stamp)
+    except Exception:
+        return ""
+
+
+def save_photos(files, dest: Path, taken: list | None = None) -> list[str]:
     """Save uploads as clean JPEGs (HEIC converted, EXIF/GPS stripped, rotation fixed).
     Also writes smaller copies to dest/ai/ for Claude. Returns photo refs relative
-    to UPLOAD_DIR — the only thing the browser ever sends back to us."""
+    to UPLOAD_DIR — the only thing the browser ever sends back to us. If `taken` is a list,
+    each saved photo's (EXIF capture time, upload index) is appended to it."""
     (dest / "ai").mkdir(parents=True, exist_ok=True)
     refs = []
     for i, f in enumerate(files):
         if not f or not f.filename or Path(f.filename).suffix.lower() not in ALLOWED_PHOTO_EXTS:
             continue
         try:
-            img = ImageOps.exif_transpose(Image.open(f.stream)).convert("RGB")
+            original = Image.open(f.stream)
+            captured = _taken_at(original)
+            img = ImageOps.exif_transpose(original).convert("RGB")
         except Exception:
             print(f"[uploads] Skipped unreadable photo {f.filename!r}")
             continue
+        if taken is not None:
+            taken.append((captured, i))
         full = dest / f"photo_{len(refs)}.jpg"
         listing_img = img.copy()
         listing_img.thumbnail((2400, 2400))          # plenty for eBay's zoom, fast to upload
@@ -386,7 +403,7 @@ class ClaudeError(RuntimeError):
 
 
 def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: int = CLAUDE_TIMEOUT,
-               usage: dict | None = None) -> dict:
+               usage: dict | None = None, effort: str | None = None) -> dict:
     """Run one headless Claude Code call and return its structured JSON output.
 
     - Uses your Claude plan login (ANTHROPIC_API_KEY is removed so it never bills an API key).
@@ -404,6 +421,8 @@ def run_claude(prompt: str, schema: dict, cwd: Path, tools: list[str], timeout: 
         "--no-session-persistence",
         "--setting-sources", "",
     ]
+    if effort:
+        cmd += ["--effort", effort]
 
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     try:
@@ -499,9 +518,76 @@ Seller's notes (trust these over the photos for things photos can't show):
     return run_claude(prompt, GAME_INFO_SCHEMA, cwd=photo_dir / "ai", tools=["Read"], timeout=150, usage=usage)
 
 
-def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568):
+GROUPS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "photos": {"type": "array", "items": {"type": "integer"}, "description": "Photo numbers in this item"},
+                    "item": {"type": "string", "description": "Short label, e.g. 'Diddy Kong Racing — N64 cart'"},
+                },
+                "required": ["photos", "item"],
+            },
+        },
+    },
+    "required": ["groups"],
+}
+
+DUMP_MAX_PHOTOS = 60
+DUMP_SHEET_SIZE = 20   # photos per contact sheet (4 x 5); the CLI attaches up to 3 sheets
+
+
+def group_photos(photo_dir: Path, count: int, usage: dict | None = None) -> list[dict]:
+    """Split a photo dump (photo_1..photo_N in the order taken) into one group per item.
+    Returns [{"photos": [1-based numbers], "item": label}] covering every photo exactly once."""
+    photos = [photo_dir / "ai" / f"photo_{i}.jpg" for i in range(count)]
+    sheets = []
+    for start in range(0, count, DUMP_SHEET_SIZE):
+        sheet = photo_dir / "ai" / f"dump_sheet_{len(sheets) + 1}.jpg"
+        make_contact_sheet(photos[start:start + DUMP_SHEET_SIZE], sheet, cols=4,
+                           labels=[str(n) for n in range(start + 1, min(start + DUMP_SHEET_SIZE, count) + 1)])
+        sheets.append(sheet)
+    prompt = f"""{chr(10).join('@' + s.name for s in sheets)}
+
+These contact sheets show {count} photos, numbered 1–{count} in the order they were taken.
+The seller photographed several items one after another (retro games: carts, discs, boxes,
+manuals, consoles) and wants one eBay listing per physical item. Split the photos into items.
+
+How to decide:
+- Photos of one item are almost always consecutive: e.g. front, back, label close-up, box, manual.
+- A new item starts when a different title/front appears. Backs of carts and discs often look
+  identical across games — a back belongs with the item photographed next to it (usually the
+  front just before it), not with another game.
+- Two copies of the same game are separate items if the photos clearly show two physical copies.
+- A box and manual photographed right after a cart are the same item (a complete copy).
+- Decide from the contact sheets — you only need to tell items apart, not read fine print.
+  Only if two neighbouring photos are genuinely ambiguous, Read at most 2 full photos:
+  photo_N.jpg is photo number N+1 (photo_0.jpg = number 1).
+- item: just "<title> — <platform> <cart/disc/CIB/etc.>". Keep it short.
+- Every photo number from 1 to {count} must appear in exactly one group, in order."""
+    result = run_claude(prompt, GROUPS_SCHEMA, cwd=photo_dir / "ai", tools=["Read"], timeout=180, usage=usage,
+                        effort="medium")  # low was faster but mis-grouped a back photo in testing
+
+    # Repair anything the model got wrong so every photo lands in exactly one group
+    seen, groups = set(), []
+    for group in result.get("groups", []):
+        nums = [n for n in group.get("photos", []) if isinstance(n, int) and 1 <= n <= count and n not in seen]
+        seen.update(nums)
+        if nums:
+            groups.append({"photos": sorted(nums), "item": str(group.get("item", ""))[:80]})
+    for n in range(1, count + 1):
+        if n not in seen:
+            groups.append({"photos": [n], "item": "Unsorted photo"})
+    return sorted(groups, key=lambda g: g["photos"][0])
+
+
+def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568, cols: int | None = None,
+                       labels: list[str] | None = None):
     """Tile photos into one labelled grid image."""
-    cols = 2 if len(paths) <= 4 else 3
+    cols = cols or (2 if len(paths) <= 4 else 3)
     cell = width // cols
     thumbs = []
     for p in paths:
@@ -515,8 +601,9 @@ def make_contact_sheet(paths: list[Path], out: Path, width: int = 1568):
     for i, (p, im) in enumerate(zip(paths, thumbs)):
         x, y = (i % cols) * cell, (i // cols) * cell
         sheet.paste(im, (x + (cell - im.width) // 2, y + (cell - im.height) // 2))
-        draw.rectangle((x, y, x + 190, y + 48), fill="black")
-        draw.text((x + 8, y + 4), p.stem, fill="white", font=font)
+        label = labels[i] if labels else p.stem
+        draw.rectangle((x, y, x + 20 + 22 * len(label), y + 48), fill="black")
+        draw.text((x + 8, y + 4), label, fill="white", font=font)
     sheet.save(out, "JPEG", quality=88)
 
 
@@ -1007,12 +1094,78 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
+@app.route("/group-photos", methods=["POST"])
+@require_pin
+def group_photos_route():
+    """Photo dump → sorted by capture time → split into one group per game.
+
+    Form: photos (files), modified (JSON list of each file's lastModified ms, a fallback when a
+    photo has no EXIF time). Returns {groups: [{item, photos: [{ref, index}]}]} where `index`
+    is the file's position in the upload, so the browser can show its own thumbnails."""
+    files = request.files.getlist("photos")
+    if not 2 <= len(files) <= DUMP_MAX_PHOTOS:
+        return jsonify({"error": f"Send between 2 and {DUMP_MAX_PHOTOS} photos"}), 400
+    try:
+        modified = [float(m) for m in json.loads(request.form.get("modified", "[]"))]
+    except (ValueError, TypeError):
+        modified = []
+
+    dump_dir = UPLOAD_DIR / uuid.uuid4().hex / "dump"
+    taken: list = []
+    refs = save_photos(files, dump_dir, taken)
+    if len(refs) < 2:
+        return jsonify({"error": "Need at least 2 readable photos"}), 400
+
+    # Order by EXIF capture time; fall back to the file's modified time, then upload order
+    def sort_key(k: int):
+        captured, index = taken[k]
+        fallback = modified[index] if index < len(modified) else 0
+        return (captured or time.strftime("%Y:%m:%d %H:%M:%S", time.localtime(fallback / 1000)), index)
+    order = sorted(range(len(refs)), key=sort_key)
+
+    # Renumber files into capture order so photo_0 is the first photo taken
+    ai_dir = dump_dir / "ai"
+    for k in range(len(refs)):
+        (dump_dir / f"photo_{k}.jpg").rename(dump_dir / f"tmp_{k}.jpg")
+        (ai_dir / f"photo_{k}.jpg").rename(ai_dir / f"tmp_{k}.jpg")
+    for new, old in enumerate(order):
+        (dump_dir / f"tmp_{old}.jpg").rename(dump_dir / f"photo_{new}.jpg")
+        (ai_dir / f"tmp_{old}.jpg").rename(ai_dir / f"photo_{new}.jpg")
+    ordered = [{"ref": refs[new], "index": taken[old][1]} for new, old in enumerate(order)]
+
+    usage: dict = {}
+    try:
+        groups = group_photos(dump_dir, len(refs), usage)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    print(f"[dump] {len(refs)} photos → {len(groups)} items, "
+          f"{sum(usage.get(k, 0) for k in ('input', 'cache_write', 'cache_read', 'output')):,} tokens, "
+          f"{usage.get('seconds')}s")
+    return jsonify({"groups": [{"item": g["item"], "photos": [ordered[n - 1] for n in g["photos"]]} for g in groups]})
+
+
+def _link_photos(refs: list[str], game_dir: Path) -> list[str]:
+    """Reuse already-uploaded photos (from a dump) for one game: link them into the game's own
+    folder so the analysis only sees this game's photos. Returns the refs that were valid."""
+    (game_dir / "ai").mkdir(parents=True, exist_ok=True)
+    kept = []
+    for ref in refs:
+        path = resolve_photo(ref)
+        if not path or not (path.parent / "ai" / path.name).exists():
+            continue
+        name = f"photo_{len(kept)}.jpg"
+        os.link(path.parent / "ai" / path.name, game_dir / "ai" / name)
+        kept.append(ref)
+    return kept
+
+
 @app.route("/analyze-batch", methods=["POST"])
 @require_pin
 def analyze_batch():
     """Analyze one or more games, streaming progress as Server-Sent Events.
 
-    Form fields: game_count, game_{n}_photos (files), game_{n}_notes, tested.
+    Form fields: game_count, game_{n}_photos (files) OR game_{n}_refs (JSON list of photo refs
+    already uploaded by /group-photos), game_{n}_notes, tested.
     Games run in parallel (ANALYZE_WORKERS at a time)."""
     try:
         game_count = int(request.form.get("game_count", 0))
@@ -1027,7 +1180,13 @@ def analyze_batch():
     games = []
     for g in range(game_count):
         game_dir = batch_dir / f"game_{g}"
-        refs = save_photos(request.files.getlist(f"game_{g}_photos"), game_dir)
+        if request.form.get(f"game_{g}_refs"):
+            try:
+                refs = _link_photos(json.loads(request.form[f"game_{g}_refs"])[:24], game_dir)
+            except (ValueError, TypeError):
+                refs = []
+        else:
+            refs = save_photos(request.files.getlist(f"game_{g}_photos"), game_dir)
         err = None if refs else "No readable photos — use JPG, PNG, WEBP or HEIC"
         games.append({"dir": game_dir, "refs": refs, "notes": request.form.get(f"game_{g}_notes", "")[:2000],
                       "error": err})
