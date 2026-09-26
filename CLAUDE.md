@@ -7,10 +7,15 @@ A Flask web app that lets Storm photograph retro video games, identifies and gra
 ## Project Structure
 ```
 ebayListingBot/
-├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing
+├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing + eBay adapter
+├── inventory.py                     # Cross-listing: SQLite inventory, adapter interface, sale sync loop
+├── mercari.py                       # Mercari adapter (Playwright) + CLI: login / probe / sold
 ├── templates/
 │   ├── index.html                   # Single-page frontend, retro dark theme
+│   ├── inventory.html               # Inventory / cross-listing page
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
+├── inventory.db                     # Inventory + listings + events (gitignored)
+├── mercari_profile/, mercari_debug/ # Mercari browser login + screenshots (gitignored)
 ├── pricecharting_master_price.csv   # Local price guide (~23k games, 14 consoles)
 ├── setup_policies.py                # One-time: create eBay business policies
 ├── setup_shipping_policy.py         # One-time: create calculated-shipping policy
@@ -114,6 +119,52 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 - "AI check" panel per game: ID confidence, authenticity, variant, flags, the PriceCharting row used (linked), alternative rows with one-tap prices, token usage.
 - Everything editable before publishing (title, description, condition, weight, price, item specifics). Published batch cards link to the live listing and can't be published twice.
 - All model text is HTML-escaped (`esc()`) before rendering.
+
+## Cross-listing & Sale Sync (`inventory.py`, `mercari.py`, `/inventory`)
+Every game published from the lister is recorded in **`inventory.db`** (SQLite, gitignored): `items` (one row per
+game, keyed by eBay SKU, with the permanent `ebayimg.com` image URLs) and `listings` (one row per marketplace:
+`listed` / `pending` / `error` / `sold` / `delisted` / `delist_failed`), plus an `events` log.
+
+- **Adapters**: each marketplace subclasses `inventory.Adapter` with `list_item`, `delist`, `sold_listing_ids`,
+  `status`. `EbayAdapter` lives in app.py (needs the eBay login); `MercariAdapter` in mercari.py.
+- **Sync loop** (`start_sync_thread`, started in `__main__`): each adapter is asked what sold every
+  `check_interval` seconds (eBay 5 min via Fulfillment API `GET /order` by creation date; Mercari 15 min by
+  scraping the in-progress/complete sales pages). A sale → `mark_sold()` → item `sold`, and every other live
+  listing is delisted. Failed delists become `delist_failed`, are retried every sync, and show as a red alert.
+  If a `delist_failed` listing then sells too, it's logged as a **DOUBLE SALE** (cancel one order).
+- **eBay delist** = withdraw the offer (`POST /offer/{id}/withdraw`); the inventory item stays so it can be relisted.
+- **Import**: "Import live eBay listings" pulls in published Inventory-API offers (everything RetroList listed).
+  Listings made in Seller Hub / the eBay app aren't visible to that API.
+- **Listing jobs** run one at a time in a background executor; browser work is also serialized by a lock.
+  If an item sells while its Mercari listing is being created, the new listing is taken down right after.
+
+**Mercari** has no public seller API — `mercari.py` drives mercari.com with Playwright in a persistent, logged-in
+profile (`mercari_profile/`, gitignored), headless by default, at a human pace (`MERCARI_MIN_GAP`, random pauses).
+- One-time: `./venv/bin/playwright install chromium`, then `./venv/bin/python mercari.py login`.
+- **All locators are in `SELECTORS`** at the top of mercari.py. They were written without access to the live
+  site and tested only against a mock form — if a step fails, run `./venv/bin/python mercari.py probe` (dumps the
+  sell form's fields to `mercari_debug/probe.json` + screenshot) and fix the table. Failures save a screenshot to
+  `mercari_debug/`.
+- `MERCARI_SUBMIT=false` (default) = dry run: fill the form, screenshot, don't press List.
+- Delist = Deactivate (reversible) on `/sell/edit/{id}/`; `MERCARI_DELIST=delete` to delete instead.
+- ToS: Mercari discourages automation. Keep volume and pace human; it's your account.
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/inventory` | GET | Inventory page |
+| `/inventory/data` | GET | `{items, platforms, events, last_sync, syncing}` (polled every 10s) |
+| `/inventory/sync` | POST | Check every marketplace for sales now |
+| `/inventory/import-ebay` | POST | Import live eBay listings |
+| `/inventory/<sku>/list/<platform>` | POST | Queue a cross-listing job |
+| `/inventory/<sku>/sold` | POST | Sold elsewhere (in person…) → delist everywhere |
+
+Env (all optional): `SYNC_ENABLED=true`, `EBAY_SYNC_INTERVAL=300`, `MERCARI_ENABLED=true`, `MERCARI_SUBMIT=false`,
+`MERCARI_HEADLESS=true`, `MERCARI_CHANNEL=chrome` (installed Chrome; empty = Playwright Chromium),
+`MERCARI_PRICE_MARKUP=0` (%), `MERCARI_CATEGORY="Electronics > Video Games & Consoles > Video Games"`,
+`MERCARI_SHIPPING=` (text of the shipping option to click), `MERCARI_CHECK_INTERVAL=900`, `MERCARI_MIN_GAP=90`,
+`MERCARI_DELIST=deactivate`, `MERCARI_SOLD_PAGES=` (comma-separated URLs).
+
+Next marketplaces (Poshmark, Vinted) = another `Adapter` subclass in its own file, registered in app.py.
 
 ## Design System
 - Background `#0a0a0f`, Surface `#13131a`, Accent `#ff6b2b`, Yellow `#ffcc00`, Green `#39ff14`

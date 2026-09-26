@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RetroList — Inventory</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0f; --surface: #13131a; --surface2: #1c1c28; --border: #2a2a3d;
+      --accent: #ff6b2b; --accent2: #ffcc00; --green: #39ff14; --red: #ff3b5c;
+      --text: #e8e8f0; --muted: #6b6b8a;
+      --font-mono: 'Space Mono', monospace; --font-display: 'Syne', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-mono); min-height: 100vh; overflow-x: hidden; }
+    body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px); }
+    body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0; background-size: 48px 48px;
+      background-image: linear-gradient(rgba(255,107,43,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,107,43,0.04) 1px, transparent 1px); }
+    .container { max-width: 900px; margin: 0 auto; padding: 0 16px 80px; position: relative; z-index: 1; }
+
+    header { padding: 36px 0 24px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+    .header-tag { font-size: 11px; letter-spacing: 0.3em; color: var(--accent); margin-bottom: 8px; }
+    h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(2rem, 8vw, 3.2rem); line-height: 1; }
+    h1 span { color: var(--accent); }
+    .nav { margin-top: 12px; font-size: 12px; }
+    .nav a { color: var(--accent); text-decoration: none; }
+
+    .platforms { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .chip { font-size: 11px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+    .dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.bad { background: var(--red); }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+    button { font-family: var(--font-mono); font-size: 12px; padding: 8px 14px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--text); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 700; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .tabs { display: flex; gap: 4px; margin-left: auto; }
+    .tabs button.active { border-color: var(--accent); color: var(--accent); }
+    .muted { color: var(--muted); font-size: 11px; }
+
+    .alert { border: 1px solid var(--red); background: rgba(255,59,92,0.08); color: var(--text); padding: 12px 14px;
+      border-radius: 6px; margin-bottom: 12px; font-size: 12px; line-height: 1.5; }
+    .alert b { color: var(--red); }
+
+    .item { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; margin-bottom: 10px; }
+    .item.sold { opacity: 0.6; }
+    .thumb { width: 64px; height: 64px; flex: none; border-radius: 4px; object-fit: cover; background: var(--surface2); }
+    .item-body { flex: 1; min-width: 0; }
+    .item-title { font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+    .item-meta { font-size: 11px; color: var(--muted); margin: 4px 0 8px; }
+    .item-meta .price { color: var(--green); font-weight: 700; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .badge { font-size: 10px; letter-spacing: 0.05em; padding: 4px 8px; border-radius: 3px; border: 1px solid var(--border);
+      text-decoration: none; color: var(--text); background: var(--surface2); }
+    .badge.listed { border-color: var(--green); color: var(--green); }
+    .badge.pending { border-color: var(--accent2); color: var(--accent2); }
+    .badge.sold { border-color: var(--accent); color: var(--accent); }
+    .badge.error, .badge.delist_failed { border-color: var(--red); color: var(--red); }
+    .badge.delisted { color: var(--muted); }
+    .badges button { font-size: 10px; padding: 4px 8px; }
+    .err { font-size: 10px; color: var(--red); margin-top: 6px; overflow-wrap: anywhere; }
+
+    h2 { font-family: var(--font-display); font-size: 1.1rem; margin: 32px 0 12px; }
+    .events { font-size: 11px; line-height: 1.6; }
+    .event { padding: 6px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+    .event .t { color: var(--muted); margin-right: 8px; }
+    .event.sold .m { color: var(--accent); }
+    .event.error .m { color: var(--red); }
+    .empty { text-align: center; padding: 40px 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--surface2);
+      border: 1px solid var(--accent); padding: 10px 16px; border-radius: 6px; font-size: 12px; z-index: 200; display: none; max-width: 90vw; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="header-tag">// cross-listing{% if sandbox %} · SANDBOX{% endif %}</div>
+    <h1>Inven<span>tory</span></h1>
+    <div class="nav"><a href="/">← Lister</a></div>
+  </header>
+
+  <div class="platforms" id="platforms"></div>
+  <div id="alerts"></div>
+
+  <div class="toolbar">
+    <button class="primary" id="sync-btn" onclick="syncNow()">⟳ Check sales now</button>
+    <button id="import-btn" onclick="importEbay()">⤓ Import live eBay listings</button>
+    <span class="muted" id="last-sync"></span>
+    <div class="tabs">
+      <button data-filter="active" class="active">Active</button>
+      <button data-filter="sold">Sold</button>
+      <button data-filter="all">All</button>
+    </div>
+  </div>
+
+  <div id="items"></div>
+
+  <h2>Activity</h2>
+  <div class="events" id="events"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const money = (n) => `$${(parseFloat(n) || 0).toFixed(2)}`;
+  const ago = (t) => {
+    if (!t) return 'never';
+    const s = Math.round(Date.now() / 1000 - t);
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : s < 86400 ? `${Math.round(s / 3600)}h ago`
+      : new Date(t * 1000).toLocaleDateString();
+  };
+  const STATUS_TEXT = { listed: 'listed', pending: 'listing…', sold: 'SOLD', error: 'failed',
+    delisted: 'removed', delist_failed: 'STILL UP' };
+
+  let filter = 'active';
+  try { filter = localStorage.getItem('inv-filter') || 'active'; } catch (e) {}
+  let data = { items: [], platforms: [], events: [] };
+
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === filter);
+    b.onclick = () => {
+      filter = b.dataset.filter;
+      try { localStorage.setItem('inv-filter', filter); } catch (e) {}
+      document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+      render();
+    };
+  });
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.style.display = 'block';
+    clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = 'none', 4000);
+  }
+
+  async function post(url) {
+    const resp = await fetch(url, { method: 'POST' });
+    if (resp.status === 401) { location.reload(); throw new Error('Not logged in'); }
+    return resp.json();
+  }
+
+  async function load() {
+    try {
+      const resp = await fetch('/inventory/data');
+      if (resp.status === 401) return location.reload();
+      data = await resp.json();
+      render();
+    } catch (e) { /* offline for a moment — next poll retries */ }
+  }
+
+  function render() {
+    // Marketplace status chips
+    document.getElementById('platforms').innerHTML = data.platforms.map(p =>
+      `<div class="chip"><span class="dot ${p.ok && !p.sync_error ? 'ok' : 'bad'}"></span>${esc(p.label)}: ${esc(p.message)}</div>`
+    ).join('');
+    document.getElementById('last-sync').textContent =
+      data.syncing ? 'checking…' : `last check ${ago(data.last_sync)}`;
+
+    // Things that need a human: still listed after selling, or sold twice
+    const stuck = data.items.filter(i => Object.values(i.listings).some(l => l.status === 'delist_failed'));
+    const doubles = data.events.filter(e => e.level === 'error' && e.message.startsWith('DOUBLE SALE'));
+    document.getElementById('alerts').innerHTML =
+      doubles.slice(0, 3).map(e => `<div class="alert"><b>Double sale.</b> ${esc(e.message)}</div>`).join('') +
+      stuck.map(i => {
+        const where = Object.values(i.listings).filter(l => l.status === 'delist_failed').map(l => l.platform);
+        return `<div class="alert"><b>Sold but still listed on ${esc(where.join(', '))}:</b> ${esc(i.title)}.
+          The app keeps retrying — take it down by hand if this doesn't clear.</div>`;
+      }).join('');
+
+    // Items
+    const items = data.items.filter(i => filter === 'all' || i.status === filter);
+    const listable = data.platforms.filter(p => p.can_list);
+    document.getElementById('items').innerHTML = items.length ? items.map(i => {
+      const badges = data.platforms.map(p => {
+        const l = i.listings[p.name];
+        if (!l) {
+          return i.status === 'active' && p.can_list
+            ? `<button onclick="listOn('${esc(i.sku)}','${esc(p.name)}')" ${p.ok ? '' : 'disabled'}>+ ${esc(p.label)}</button>` : '';
+        }
+        const dry = l.status === 'error' && (l.error || '').startsWith('dry run');
+        const label = `${esc(p.label)} · ${dry ? 'dry run' : STATUS_TEXT[l.status] || esc(l.status)}`;
+        const badge = l.url && l.status === 'listed'
+          ? `<a class="badge listed" href="${esc(l.url)}" target="_blank" rel="noopener">${label} ↗</a>`
+          : `<span class="badge ${dry ? 'pending' : esc(l.status)}">${label}</span>`;
+        const retry = l.status === 'error' && i.status === 'active' && p.can_list
+          ? `<button onclick="listOn('${esc(i.sku)}','${esc(p.name)}')">retry</button>` : '';
+        return badge + retry;
+      }).join('');
+      const errors = Object.values(i.listings).filter(l => l.error && ['error', 'delist_failed'].includes(l.status))
+        .map(l => `<div class="err" ${l.error.startsWith('dry run') ? 'style="color:var(--muted)"' : ''}>${esc(l.platform)}: ${esc(l.error)}</div>`).join('');
+      const img = i.image_urls[0] ? `<img class="thumb" src="${esc(i.image_urls[0])}" alt="" loading="lazy">` : '<div class="thumb"></div>';
+      const soldNote = i.status === 'sold' ? ` · sold on ${esc(i.sold_on)} ${ago(i.sold_at)}` : '';
+      const soldBtn = i.status === 'active' ? `<button onclick="markSold('${esc(i.sku)}')">Sold elsewhere</button>` : '';
+      return `<div class="item ${i.status === 'sold' ? 'sold' : ''}">${img}<div class="item-body">
+          <div class="item-title">${esc(i.title)}</div>
+          <div class="item-meta"><span class="price">${money(i.price)}</span> · ${esc(i.sku)}${soldNote}</div>
+          <div class="badges">${badges}${soldBtn}</div>${errors}</div></div>`;
+    }).join('') : `<div class="empty">${filter === 'sold' ? 'Nothing sold yet.' :
+      'No games tracked yet.<br>Everything you publish from the lister shows up here —<br>or tap “Import live eBay listings”.'}</div>`;
+
+    document.getElementById('events').innerHTML = data.events.map(e =>
+      `<div class="event ${esc(e.level)}"><span class="t">${ago(e.at)}</span><span class="m">${esc(e.message)}</span></div>`
+    ).join('') || '<div class="muted">Nothing yet.</div>';
+  }
+
+  async function listOn(sku, platform) {
+    const r = await post(`/inventory/${encodeURIComponent(sku)}/list/${platform}`);
+    toast(r.success ? 'Queued — listings go out one at a time at a human pace' : r.error);
+    load();
+  }
+
+  async function markSold(sku) {
+    if (!confirm('Mark this as sold and take it down on every marketplace?')) return;
+    await post(`/inventory/${encodeURIComponent(sku)}/sold`);
+    toast('Taking it down everywhere…');
+    setTimeout(load, 1500);
+  }
+
+  async function syncNow() {
+    await post('/inventory/sync');
+    toast('Checking every marketplace for sales…');
+    setTimeout(load, 1500);
+  }
+
+  async function importEbay() {
+    const btn = document.getElementById('import-btn');
+    btn.disabled = true; btn.textContent = 'Importing…';
+    try {
+      const r = await post('/inventory/import-ebay');
+      toast(r.success ? `Imported ${r.added} listing(s)` : r.error);
+    } finally {
+      btn.disabled = false; btn.textContent = '⤓ Import live eBay listings';
+      load();
+    }
+  }
+
+  load();
+  setInterval(load, 10000);
+</script>
+</body>
+</html>

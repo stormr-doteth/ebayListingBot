@@ -18,6 +18,7 @@ import shutil
 import secrets
 import subprocess
 import sys
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,6 +31,8 @@ from flask import Flask, render_template, request, jsonify, Response, session, r
 from markupsafe import escape
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import pillow_heif
+
+import inventory
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -951,9 +954,135 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     if pub_resp.status_code in (200, 201):
         listing_id = pub_resp.json().get("listingId")
         print(f"[publish] Listed {sku} → {listing_id}")
-        return {"success": True, "listing_id": listing_id, "sku": sku,
-                "url": f"https://www.{'sandbox.' if EBAY_SANDBOX else ''}ebay.com/itm/{listing_id}"}
+        url = ebay_item_url(listing_id)
+        # Remember it for cross-listing and sale sync
+        inventory.add_item(sku, title, price, listing["condition"], listing.get("description", ""),
+                           game_info, photo_refs, image_urls)
+        inventory.set_listing(sku, "ebay", inventory.LISTED, listing_id=str(listing_id), offer_id=offer_id, url=url)
+        return {"success": True, "listing_id": listing_id, "sku": sku, "url": url}
     return {"success": False, "error": _ebay_error("Publish error", pub_resp), "sku": sku}
+
+
+def ebay_item_url(listing_id) -> str:
+    return f"https://www.{'sandbox.' if EBAY_SANDBOX else ''}ebay.com/itm/{listing_id}"
+
+
+def _ebay_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+            "Content-Language": "en-US", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"}
+
+
+class EbayAdapter(inventory.Adapter):
+    """eBay through the official APIs: sales from the Fulfillment API, delisting by withdrawing the offer."""
+    name = "ebay"
+    label = "eBay"
+    can_list = False          # games start on eBay (the main screen), so there's nothing to cross-list *to* it
+    check_interval = int(os.environ.get("EBAY_SYNC_INTERVAL", "300"))
+
+    def status(self) -> tuple[bool, str]:
+        return (True, "connected") if get_ebay_token() else (False, "not connected")
+
+    def sold_listing_ids(self, listings: list[dict]) -> set[str]:
+        """Listing IDs with an order created since the last check (with a 1-day overlap)."""
+        token = get_ebay_token()
+        by_sku = {l["sku"]: l["listing_id"] for l in listings}
+        last = float(inventory.get_meta("ebay_orders_checked_at", "0") or 0)
+        since = max(last - 86400, time.time() - 30 * 86400) if last else time.time() - 3 * 86400
+        started = time.time()
+        sold: set[str] = set()
+        offset = 0
+        while True:
+            resp = requests.get(
+                f"{EBAY_BASE_URL}/sell/fulfillment/v1/order", headers=_ebay_headers(token), timeout=30,
+                params={"filter": f"creationdate:[{time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(since))}..]",
+                        "limit": 200, "offset": offset})
+            if resp.status_code != 200:
+                raise RuntimeError(_ebay_error("eBay orders check failed", resp))
+            data = resp.json()
+            for order in data.get("orders", []):
+                if order.get("cancelStatus", {}).get("cancelState") == "CANCELED":
+                    continue
+                for line in order.get("lineItems", []):
+                    if line.get("legacyItemId"):
+                        sold.add(str(line["legacyItemId"]))
+                    if line.get("sku") in by_sku:
+                        sold.add(by_sku[line["sku"]])
+            offset += 200
+            if offset >= data.get("total", 0):
+                break
+        inventory.set_meta("ebay_orders_checked_at", str(started))
+        return sold
+
+    def delist(self, listing: dict):
+        """End the eBay listing by withdrawing its offer (the inventory item stays, so it can be relisted)."""
+        token = get_ebay_token()
+        headers = _ebay_headers(token)
+        offer_id = listing.get("offer_id")
+        if not offer_id:
+            resp = requests.get(f"{EBAY_BASE_URL}/sell/inventory/v1/offer", headers=headers, timeout=30,
+                                params={"sku": listing["sku"]})
+            if resp.status_code != 200:
+                raise RuntimeError(_ebay_error("Couldn't find the eBay offer", resp))
+            offers = resp.json().get("offers", [])
+            if not offers:
+                return  # nothing on eBay any more
+            offer_id = offers[0]["offerId"]
+        resp = requests.post(f"{EBAY_BASE_URL}/sell/inventory/v1/offer/{offer_id}/withdraw",
+                             headers=headers, timeout=30)
+        # 25713 = "offer is not published" → already ended, which is what we wanted
+        if resp.status_code not in (200, 204) and "25713" not in resp.text and "not published" not in resp.text.lower():
+            raise RuntimeError(_ebay_error("eBay withdraw failed", resp))
+
+
+inventory.init_db()
+inventory.register(EbayAdapter())
+if _env_bool("MERCARI_ENABLED", True):
+    import mercari
+    mercari.set_photo_resolver(resolve_photo)
+    inventory.register(mercari.MercariAdapter())
+
+
+def import_ebay_listings() -> dict:
+    """Pull live listings that were created through the Inventory API (everything RetroList listed)
+    into the inventory, so they're protected by the sale sync too. Listings made in Seller Hub or
+    the eBay app aren't visible to this API."""
+    token = get_ebay_token()
+    if not token:
+        return {"success": False, "error": "Connect eBay first"}
+    headers = _ebay_headers(token)
+    known = {i["sku"] for i in inventory.all_items()}
+    added, offset = 0, 0
+    while True:
+        resp = requests.get(f"{EBAY_BASE_URL}/sell/inventory/v1/inventory_item", headers=headers, timeout=30,
+                            params={"limit": 100, "offset": offset})
+        if resp.status_code != 200:
+            return {"success": False, "error": _ebay_error("eBay inventory read failed", resp)}
+        data = resp.json()
+        for inv in data.get("inventoryItems", []):
+            sku = inv.get("sku")
+            qty = inv.get("availability", {}).get("shipToLocationAvailability", {}).get("quantity", 0)
+            if not sku or sku in known or qty < 1:
+                continue
+            offers = requests.get(f"{EBAY_BASE_URL}/sell/inventory/v1/offer", headers=headers, timeout=30,
+                                  params={"sku": sku})
+            live = [o for o in offers.json().get("offers", []) if o.get("status") == "PUBLISHED"] \
+                if offers.status_code == 200 else []
+            if not live:
+                continue
+            offer, product = live[0], inv.get("product", {})
+            listing_id = offer.get("listing", {}).get("listingId")
+            inventory.add_item(sku, product.get("title", sku),
+                               float(offer.get("pricingSummary", {}).get("price", {}).get("value", 0)),
+                               inv.get("condition", ""), offer.get("listingDescription") or product.get("description", ""),
+                               {"condition_notes": inv.get("conditionDescription", "")}, [], product.get("imageUrls", []))
+            inventory.set_listing(sku, "ebay", inventory.LISTED, listing_id=str(listing_id),
+                                  offer_id=offer.get("offerId"), url=ebay_item_url(listing_id))
+            added += 1
+        offset += 100
+        if offset >= data.get("total", 0):
+            break
+    inventory.log_event("info", f"Imported {added} live eBay listing(s)")
+    return {"success": True, "added": added}
 
 
 # ─────────────────────────────────────────
@@ -1254,6 +1383,60 @@ def publish_batch():
 
 
 # ─────────────────────────────────────────
+#  Inventory / cross-listing
+# ─────────────────────────────────────────
+
+@app.route("/inventory")
+@require_pin
+def inventory_page():
+    return render_template("inventory.html", sandbox=EBAY_SANDBOX)
+
+
+@app.route("/inventory/data")
+@require_pin
+def inventory_data():
+    platforms = []
+    for name, adapter in inventory.ADAPTERS.items():
+        ok, msg = adapter.status()
+        platforms.append({"name": name, "label": adapter.label, "can_list": adapter.can_list,
+                          "ok": ok, "message": inventory.sync_state["errors"].get(name) or msg,
+                          "sync_error": name in inventory.sync_state["errors"]})
+    return jsonify({"items": inventory.all_items(), "platforms": platforms,
+                    "events": inventory.recent_events(30),
+                    "last_sync": inventory.sync_state["last_run"], "syncing": inventory.sync_state["running"]})
+
+
+@app.route("/inventory/sync", methods=["POST"])
+@require_pin
+def inventory_sync():
+    threading.Thread(target=inventory.sync_once, kwargs={"force": True}, daemon=True).start()
+    return jsonify({"success": True})
+
+
+@app.route("/inventory/import-ebay", methods=["POST"])
+@require_pin
+def inventory_import_ebay():
+    return jsonify(import_ebay_listings())
+
+
+@app.route("/inventory/<sku>/list/<platform>", methods=["POST"])
+@require_pin
+def inventory_list(sku, platform):
+    error = inventory.queue_listing(sku, platform)
+    return jsonify({"success": not error, "error": error}), (400 if error else 200)
+
+
+@app.route("/inventory/<sku>/sold", methods=["POST"])
+@require_pin
+def inventory_mark_sold(sku):
+    """Sold somewhere the app doesn't watch (in person, Facebook…) — take it down everywhere."""
+    if not inventory.get_item(sku):
+        return jsonify({"success": False, "error": "Unknown item"}), 404
+    threading.Thread(target=inventory.mark_sold, args=(sku, "manual"), daemon=True).start()
+    return jsonify({"success": True})
+
+
+# ─────────────────────────────────────────
 #  Startup
 # ─────────────────────────────────────────
 
@@ -1267,4 +1450,7 @@ if __name__ == "__main__":
     print(f"[startup] eBay: {'SANDBOX' if EBAY_SANDBOX else 'PRODUCTION'}, token available: {bool(get_ebay_token())}")
     if HOST != "127.0.0.1" and not APP_PIN:
         print("[startup] WARNING: no APP_PIN set — anyone on your network can open the app and publish listings")
+    if _env_bool("SYNC_ENABLED", True):
+        inventory.start_sync_thread()
+        print(f"[startup] Sale sync on: {', '.join(a.label for a in inventory.ADAPTERS.values())}")
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

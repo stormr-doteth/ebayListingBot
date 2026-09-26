@@ -7,6 +7,15 @@ Photograph a retro game → get an honest, well-priced eBay listing → publish 
 - **Flags** tell you what to double-check before you publish.
 - **Photo dump**: select every photo of a pile of games at once — it sorts them by when they were taken and splits them into one listing per game (you can fix any split before analyzing).
 - **Batch mode** analyzes several games in parallel.
+- **Cross-listing** (▦ Inventory): every published game is tracked; list it on Mercari with one tap. When a game sells anywhere, it's taken down everywhere else automatically.
+
+### Mercari setup (optional)
+```bash
+./venv/bin/pip install -r requirements.txt
+./venv/bin/playwright install chromium
+./venv/bin/python mercari.py login     # log in once in the window that opens
+```
+Starts in **dry-run** mode (fills the form, saves a screenshot to `mercari_debug/`, doesn't list). Check a couple, then add `MERCARI_SUBMIT=true` to `.env`. If Mercari changes its site: `./venv/bin/python mercari.py probe`.
 
 AI runs through the [Claude Code](https://claude.com/claude-code) CLI on your own Mac, so it uses your Claude plan instead of a paid API key.
 
