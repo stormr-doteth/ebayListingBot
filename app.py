@@ -955,6 +955,7 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
         listing_id = pub_resp.json().get("listingId")
         print(f"[publish] Listed {sku} → {listing_id}")
         return {"success": True, "listing_id": listing_id, "sku": sku, "offer_id": offer_id,
+                "image_urls": image_urls,  # permanent ebayimg.com copies — outlive the local uploads
                 "url": f"https://www.{'sandbox.' if EBAY_SANDBOX else ''}ebay.com/itm/{listing_id}"}
     return {"success": False, "error": _ebay_error("Publish error", pub_resp), "sku": sku}
 
@@ -1008,7 +1009,8 @@ def publish_item(listing: dict, game_info: dict, photos: list[str], markets: lis
     fills its form in the background) and its status is polled via /items/status.
     Passing the item_id of an earlier attempt only retries marketplaces not already live/queued,
     so tapping Publish twice never lists the same game twice."""
-    markets = [m for m in dict.fromkeys(markets or ["ebay"]) if m in crosslist.MARKETS]
+    # eBay first: its permanent image URLs are a fallback source of photos for Mercari
+    markets = [m for m in crosslist.MARKETS if m in (markets or ["ebay"])]
     if not markets:
         return {"success": False, "error": "Pick at least one marketplace"}
     if item_id and crosslist.get_item(item_id):
@@ -1028,14 +1030,18 @@ def publish_item(listing: dict, game_info: dict, photos: list[str], markets: lis
             crosslist.set_listing(item_id, "ebay", status="listed" if r["success"] else "failed",
                                   external_id=r.get("listing_id"), sku=r.get("sku"), offer_id=r.get("offer_id"),
                                   url=r.get("url"), price=listing.get("suggested_price"), error=r.get("error"))
-            out["results"]["ebay"] = {**r, "status": "listed" if r["success"] else "failed"}
+            if r.get("image_urls"):
+                crosslist.set_item_data_field(item_id, "image_urls", r["image_urls"])
+            out["results"]["ebay"] = {**{k: v for k, v in r.items() if k != "image_urls"},
+                                      "status": "listed" if r["success"] else "failed"}
         elif market == "mercari":
             paths = [p for p in (resolve_photo(ref) for ref in photos) if p]
-            if not paths:
+            image_urls = crosslist.item_data(item_id).get("image_urls") or []
+            if not paths and not image_urls:
                 out["results"]["mercari"] = {"success": False, "status": "failed", "error": "Photos not found — analyze again"}
                 crosslist.set_listing(item_id, "mercari", status="failed", error="Photos not found")
                 continue
-            crosslist.queue_publish(item_id, listing, game_info, paths)
+            crosslist.queue_publish(item_id, listing, game_info, paths, image_urls)
             out["results"]["mercari"] = {"success": True, "status": "queued",
                                          "price": crosslist.mercari_price(listing.get("suggested_price") or 0)}
 
@@ -1068,7 +1074,7 @@ def sync_sales() -> dict:
     _sync_state["running"] = True
     sold, errors = [], []
     try:
-        ebay_live = crosslist.live_listings("ebay")
+        ebay_live = crosslist.watched_listings("ebay")
         if ebay_live:
             try:
                 skus = ebay_sold_skus(min(r["created_at"] for r in ebay_live))
@@ -1076,7 +1082,7 @@ def sync_sales() -> dict:
             except Exception as e:
                 errors.append(f"eBay: {e}")
 
-        mercari_live = crosslist.live_listings("mercari")
+        mercari_live = crosslist.watched_listings("mercari")
         if mercari_live:
             try:
                 ids = crosslist.sold_ids()
@@ -1099,11 +1105,75 @@ def sync_sales() -> dict:
                                       error=None if ok else f"Sold on {market}; couldn't end automatically: {err}")
                 print(f"[sync]   {'ended' if ok else 'COULD NOT END'} {row['market']} listing {err}")
                 ended.append({"market": row["market"], "ok": ok, "title": title})
+        # Listings we couldn't end in an earlier sync: try again until they're gone
+        tried_now = {(item_id, e["market"]) for item_id, _ in sold for e in ended}
+        for row in crosslist.end_failed_listings():
+            if not AUTO_END or (row["item_id"], row["market"]) in tried_now:
+                continue
+            ok, err = end_listing(row)
+            if ok:
+                title = (crosslist.get_item(row["item_id"]) or {}).get("title", row["item_id"])
+                crosslist.set_listing(row["item_id"], row["market"], status="ended", error=None)
+                ended.append({"market": row["market"], "ok": True, "title": title})
+                print(f"[sync]   ended {row['market']} listing of {title!r} on retry")
         _sync_state["last_error"] = "; ".join(errors)
         return {"sold": len(sold), "ended": ended, "errors": errors}
     finally:
         _sync_state.update(last_run=time.time(), running=False)
         _sync_lock.release()
+
+
+def import_ebay_listings() -> dict:
+    """Pull live listings made through the Inventory API (everything RetroList listed) into the
+    inventory, so the sale sync protects them and they can be cross-listed. Listings made in
+    Seller Hub or the eBay app aren't visible to this API."""
+    token = get_ebay_token()
+    if not token:
+        return {"success": False, "error": "Connect eBay first"}
+    headers = {"Authorization": f"Bearer {token}", "Content-Language": "en-US"}
+    known = crosslist.known_ebay_skus()
+    added, offset = 0, 0
+    while True:
+        resp = requests.get(f"{EBAY_BASE_URL}/sell/inventory/v1/inventory_item", headers=headers, timeout=30,
+                            params={"limit": 100, "offset": offset})
+        if resp.status_code != 200:
+            return {"success": False, "error": _ebay_error("eBay inventory read failed", resp)}
+        data = resp.json()
+        for inv in data.get("inventoryItems", []):
+            sku = inv.get("sku")
+            qty = inv.get("availability", {}).get("shipToLocationAvailability", {}).get("quantity", 0)
+            if not sku or sku in known or qty < 1:
+                continue
+            offers = requests.get(f"{EBAY_BASE_URL}/sell/inventory/v1/offer", headers=headers, timeout=30,
+                                  params={"sku": sku})
+            live = [o for o in offers.json().get("offers", []) if o.get("status") == "PUBLISHED"] \
+                if offers.status_code == 200 else []
+            if not live:
+                continue
+            offer, product = live[0], inv.get("product", {})
+            listing_id = offer.get("listing", {}).get("listingId")
+            price = float(offer.get("pricingSummary", {}).get("price", {}).get("value", 0) or 0)
+            aspects = product.get("aspects", {})
+            listing = {"title": product.get("title", sku), "suggested_price": price,
+                       "description": offer.get("listingDescription") or product.get("description", ""),
+                       "condition": inv.get("condition", "USED_GOOD"),
+                       "weight_oz": inv.get("packageWeightAndSize", {}).get("weight", {}).get("value", 8)}
+            game_info = {"platform": (aspects.get("Platform") or [""])[0],
+                         "region": (aspects.get("Region Code") or [""])[0],
+                         "mpn": (aspects.get("MPN") or [""])[0],
+                         "year": (aspects.get("Release Year") or [""])[0],
+                         "condition_notes": inv.get("conditionDescription", "")}
+            item_id = crosslist.create_imported_item(listing["title"], price, {
+                "listing": listing, "game_info": game_info, "photos": [], "image_urls": product.get("imageUrls", [])})
+            crosslist.set_listing(item_id, "ebay", status="listed", external_id=str(listing_id or ""), sku=sku,
+                                  offer_id=offer.get("offerId"), price=price,
+                                  url=f"https://www.{'sandbox.' if EBAY_SANDBOX else ''}ebay.com/itm/{listing_id}")
+            added += 1
+        offset += 100
+        if offset >= data.get("total", 0):
+            break
+    print(f"[inventory] Imported {added} live eBay listing(s)")
+    return {"success": True, "added": added}
 
 
 def sync_loop():
@@ -1432,6 +1502,25 @@ def items_status():
 def inventory():
     return jsonify({"items": crosslist.item_summaries(limit=200), "attention": crosslist.needs_attention(),
                     "sync": {**_sync_state, "minutes": SYNC_MINUTES, "auto_end": AUTO_END}})
+
+
+@app.route("/inventory/import-ebay", methods=["POST"])
+@require_pin
+def inventory_import_ebay():
+    return jsonify(import_ebay_listings())
+
+
+@app.route("/items/<item_id>/list/<market>", methods=["POST"])
+@require_pin
+def list_existing_item(item_id: str, market: str):
+    """Cross-list something already in the inventory (e.g. an imported eBay listing) on another site."""
+    data = crosslist.item_data(item_id)
+    if not data:
+        return jsonify({"success": False, "error": "Unknown item"}), 404
+    if (crosslist.get_item(item_id) or {}).get("status") == "sold":
+        return jsonify({"success": False, "error": "Already sold"}), 400
+    return jsonify(publish_item(data["listing"], data.get("game_info", {}), data.get("photos", []),
+                                [market], item_id))
 
 
 @app.route("/sync/run", methods=["POST"])

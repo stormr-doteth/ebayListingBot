@@ -35,7 +35,8 @@ APP_PIN=1234                    # recommended
 ```bash
 ./venv/bin/playwright install chromium   # only needed if Google Chrome isn't installed
 ```
-In the app, tick **Mercari**, tap **Log in to Mercari** and log in in the window that opens on your Mac.
+Log in once: `./venv/bin/python crosslist.py login` (or tick **Mercari** in the app and tap **Log in to Mercari**).
+Games already on eBay: open **📦 Inventory → Import eBay listings**, then tap **+ Mercari** on any of them.
 It starts in **test mode** (`MERCARI_DRY_RUN=true`): it fills Mercari's form and saves a screenshot, but never posts.
 Check a few screenshots (tap the yellow “test fill” badge), then set `MERCARI_DRY_RUN=false` in `.env` and restart.
 Mercari has no public API, so this drives a browser — keep it to normal human volumes.

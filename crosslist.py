@@ -15,7 +15,10 @@ so you can check it works before anything goes live.
 import html
 import json
 import os
+import random
 import re
+import sys
+import tempfile
 import sqlite3
 import threading
 import time
@@ -24,7 +27,11 @@ import queue
 from concurrent.futures import Future
 from pathlib import Path
 
+import requests
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / ".env")  # before the settings below are read (app.py imports this module early)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -45,7 +52,8 @@ MARKETS = ("ebay", "mercari")
 #   failed     publish failed (error says why) — can be retried
 #   sold       sold on this marketplace
 #   ended      we ended it because the item sold elsewhere
-#   end_failed couldn't end it automatically — end it by hand!
+#   end_failed couldn't end it automatically — retried every sync, and shown in red until it's gone
+#   double_sold it sold here too before it could be ended — cancel one of the two orders!
 LIVE = ("listed",)
 _db_lock = threading.Lock()
 
@@ -97,11 +105,13 @@ def create_item(listing: dict, game_info: dict, photos: list[str]) -> str:
 
 
 def update_item_data(item_id: str, listing: dict, game_info: dict, photos: list[str]):
-    """A retry may carry edits (new price, fixed title) — keep the latest version."""
+    """A retry may carry edits (new price, fixed title) — keep the latest version (and the saved
+    eBay image URLs, which the browser never sends)."""
+    data = {**item_data(item_id), "listing": listing, "game_info": game_info, "photos": photos}
     with _db_lock, _db() as conn:
         conn.execute("UPDATE items SET title = ?, price = ?, data = ? WHERE id = ?",
                      (listing.get("title", ""), float(listing.get("suggested_price") or 0),
-                      json.dumps({"listing": listing, "game_info": game_info, "photos": photos}), item_id))
+                      json.dumps(data), item_id))
 
 
 def get_item(item_id: str) -> dict | None:
@@ -133,6 +143,48 @@ def get_listings(item_id: str) -> dict[str, dict]:
     return {r["market"]: dict(r) for r in rows}
 
 
+def watched_listings(market: str) -> list[dict]:
+    """Listings to check for sales: live ones, plus ones we failed to end (a sale there = double sale)."""
+    with _db() as conn:
+        rows = conn.execute("""SELECT l.*, i.created_at FROM listings l JOIN items i ON i.id = l.item_id
+                               WHERE l.market = ? AND (l.status = 'end_failed'
+                                     OR (l.status = 'listed' AND i.status = 'active'))""", (market,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def end_failed_listings() -> list[dict]:
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM listings WHERE status = 'end_failed'").fetchall()
+    return [dict(r) for r in rows]
+
+
+def known_ebay_skus() -> set[str]:
+    with _db() as conn:
+        rows = conn.execute("SELECT sku FROM listings WHERE market = 'ebay' AND sku IS NOT NULL").fetchall()
+    return {r["sku"] for r in rows}
+
+
+def item_data(item_id: str) -> dict:
+    """{listing, game_info, photos, image_urls} as stored for an item."""
+    item = get_item(item_id)
+    return json.loads(item["data"]) if item else {}
+
+
+def set_item_data_field(item_id: str, key: str, value):
+    data = item_data(item_id)
+    data[key] = value
+    with _db_lock, _db() as conn:
+        conn.execute("UPDATE items SET data = ? WHERE id = ?", (json.dumps(data), item_id))
+
+
+def create_imported_item(title: str, price: float, data: dict) -> str:
+    item_id = uuid.uuid4().hex[:12]
+    with _db_lock, _db() as conn:
+        conn.execute("INSERT INTO items (id, created_at, title, price, data) VALUES (?, ?, ?, ?, ?)",
+                     (item_id, time.time(), title, price, json.dumps(data)))
+    return item_id
+
+
 def live_listings(market: str) -> list[dict]:
     """Live listings on a marketplace, for items that haven't sold anywhere yet."""
     with _db() as conn:
@@ -143,8 +195,16 @@ def live_listings(market: str) -> list[dict]:
 
 
 def mark_sold(item_id: str, market: str) -> list[dict]:
-    """Record a sale. Returns the item's OTHER live listings, which now need ending."""
+    """Record a sale. Returns the item's OTHER live listings, which now need ending.
+    If the item had already sold on another marketplace, this is a double sale: flagged, nothing returned."""
     with _db_lock, _db() as conn:
+        item = conn.execute("SELECT status, sold_on FROM items WHERE id = ?", (item_id,)).fetchone()
+        if item and item["status"] == "sold" and item["sold_on"] != market:
+            conn.execute("UPDATE listings SET status = 'double_sold', error = ?, updated_at = ? "
+                         "WHERE item_id = ? AND market = ?",
+                         (f"DOUBLE SALE — also sold on {item['sold_on']}. Cancel one of the orders.",
+                          time.time(), item_id, market))
+            return []
         conn.execute("UPDATE items SET status = 'sold', sold_on = ?, sold_at = ? WHERE id = ? AND status = 'active'",
                      (market, time.time(), item_id))
         conn.execute("UPDATE listings SET status = 'sold', updated_at = ? WHERE item_id = ? AND market = ?",
@@ -170,6 +230,7 @@ def item_summaries(item_ids: list[str] | None = None, limit: int = 100) -> list[
                 "sold_on": it["sold_on"], "created_at": it["created_at"],
                 "listings": {r["market"]: {k: r[k] for k in ("status", "url", "price", "error", "screenshot",
                                                              "external_id")} for r in rows},
+                "imported": not json.loads(it["data"]).get("game_info", {}).get("game_title"),
             })
     return out
 
@@ -177,8 +238,9 @@ def item_summaries(item_ids: list[str] | None = None, limit: int = 100) -> list[
 def needs_attention() -> list[dict]:
     """Listings that must be ended by hand (automatic ending failed after a sale)."""
     with _db() as conn:
-        rows = conn.execute("""SELECT l.market, l.url, i.title, i.sold_on FROM listings l
-                               JOIN items i ON i.id = l.item_id WHERE l.status = 'end_failed'""").fetchall()
+        rows = conn.execute("""SELECT l.market, l.url, l.status, i.title, i.sold_on FROM listings l
+                               JOIN items i ON i.id = l.item_id
+                               WHERE l.status IN ('end_failed', 'double_sold')""").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -192,6 +254,8 @@ MERCARI_OFFSCREEN = _env_bool("MERCARI_OFFSCREEN", True)    # ...but park it off
 MERCARI_CHANNEL = os.environ.get("MERCARI_BROWSER", "chrome")  # "chrome" = your installed Google Chrome
 MERCARI_MARKUP = float(os.environ.get("MERCARI_PRICE_MARKUP", "0"))  # % added to the eBay price
 MERCARI_PROFILE = BASE_DIR / "mercari_profile"               # browser profile (your Mercari login)
+MERCARI_LOGIN_STATE = MERCARI_PROFILE / "login_state.json"   # cookies + localStorage (see _save_login)
+MERCARI_MIN_GAP = int(os.environ.get("MERCARI_MIN_GAP", "90"))  # seconds between two listings — human pace
 MERCARI_SHOTS = BASE_DIR / "uploads" / "mercari_screens"
 MERCARI_TITLE_MAX = 80
 MERCARI_DESC_MAX = 1000
@@ -221,8 +285,9 @@ def html_to_text(markup: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
-def mercari_price(price: float) -> float:
-    return max(round(float(price) * (1 + MERCARI_MARKUP / 100), 2), 1.0)
+def mercari_price(price: float) -> int:
+    """Mercari prices are whole dollars, $1 minimum."""
+    return max(1, int(round(float(price) * (1 + MERCARI_MARKUP / 100))))
 
 
 def to_mercari(listing: dict, game_info: dict) -> dict:
@@ -290,6 +355,40 @@ class MercariError(RuntimeError):
     pass
 
 
+def _pause(lo: float = 0.4, hi: float = 1.2):
+    """Short random pause between form steps — typing at machine speed looks like a bot."""
+    time.sleep(random.uniform(lo, hi))
+
+
+def _save_login(ctx):
+    """Save cookies + localStorage. A persistent profile alone drops Mercari's session cookies
+    when the browser closes, which would log you out every time."""
+    try:
+        MERCARI_PROFILE.mkdir(exist_ok=True)
+        ctx.storage_state(path=str(MERCARI_LOGIN_STATE))
+        MERCARI_LOGIN_STATE.chmod(0o600)
+    except Exception as e:
+        print(f"[mercari] Couldn't save login: {e}")
+
+
+def _restore_login(ctx):
+    if not MERCARI_LOGIN_STATE.exists():
+        return
+    try:
+        state = json.loads(MERCARI_LOGIN_STATE.read_text())
+    except (ValueError, OSError):
+        return
+    if state.get("cookies"):
+        ctx.add_cookies(state["cookies"])
+    for origin in state.get("origins", []):
+        items = {i["name"]: i["value"] for i in origin.get("localStorage", [])}
+        if items:
+            ctx.add_init_script(
+                "(([origin, items]) => { if (location.origin !== origin) return;"
+                " for (const [k, v] of Object.entries(items)) if (localStorage.getItem(k) === null)"
+                " localStorage.setItem(k, v); })(" + json.dumps([origin["origin"], items]) + ")")
+
+
 def _first(page, selectors: list[str], timeout: int = 4000):
     """The first selector that matches a visible element, or None."""
     deadline = time.time() + timeout / 1000
@@ -334,6 +433,7 @@ class MercariWorker(threading.Thread):
         self._ctx = None
         self.logged_in: bool | None = None   # None = not checked yet
         self.busy = False
+        self._last_listing = 0.0
 
     # ── plumbing ──
     def submit(self, fn, *args) -> Future:
@@ -355,6 +455,8 @@ class MercariWorker(threading.Thread):
                 print(f"[mercari] {fn.__name__} failed: {e}")
                 fut.set_exception(e)
             finally:
+                if self._ctx and self.logged_in:
+                    _save_login(self._ctx)
                 self.busy = False
 
     def _context(self, headless: bool | None = None, interactive: bool = False):
@@ -376,10 +478,13 @@ class MercariWorker(threading.Thread):
         except Exception as e:  # Google Chrome not installed → Playwright's bundled Chromium
             print(f"[mercari] Couldn't start {MERCARI_CHANNEL!r} ({e}); using bundled Chromium")
             self._ctx = self._pw.chromium.launch_persistent_context(**opts)
+        _restore_login(self._ctx)
         return self._ctx
 
     def _close(self):
         if self._ctx:
+            if self.logged_in:  # Mercari refreshes its tokens — keep the newest (never save a logged-out state)
+                _save_login(self._ctx)
             try:
                 self._ctx.close()
             except Exception:
@@ -426,8 +531,27 @@ class MercariWorker(threading.Thread):
         self._close()  # reopen later with the normal headless setting
         return "logged_in" if self.logged_in else "timed_out"
 
-    def job_publish(self, data: dict, photo_paths: list[str], shot_name: str, dry_run: bool) -> dict:
-        """Fill Mercari's sell form. Returns {status, url?, external_id?, warnings, screenshot}."""
+    def job_publish(self, data: dict, photo_paths: list[str], shot_name: str, dry_run: bool,
+                    image_urls: list[str] | None = None) -> dict:
+        """Fill Mercari's sell form. Returns {status, url?, external_id?, warnings, screenshot}.
+        photo_paths are local photos; if there are none (older than the upload cleanup, or an imported
+        eBay listing), the eBay-hosted image_urls are downloaded instead."""
+        wait = MERCARI_MIN_GAP - (time.time() - self._last_listing)
+        if wait > 0 and not dry_run:
+            print(f"[mercari] Waiting {int(wait)}s between listings (MERCARI_MIN_GAP)")
+            time.sleep(wait)
+        tmp = None
+        if not photo_paths and image_urls:
+            tmp = tempfile.TemporaryDirectory()
+            photo_paths = []
+            for n, url in enumerate(image_urls[:MERCARI_PHOTO_MAX]):
+                resp = requests.get(url, timeout=30)
+                resp.raise_for_status()
+                path = Path(tmp.name) / f"photo_{n}.jpg"
+                path.write_bytes(resp.content)
+                photo_paths.append(str(path))
+        if not photo_paths:
+            raise MercariError("No photos for this item")
         page = self._page()
         warnings: list[str] = []
         try:
@@ -453,7 +577,7 @@ class MercariWorker(threading.Thread):
             if data.get("brand"):
                 self._pick_brand(page, data["brand"], warnings)
             self._pick_condition(page, data["condition"], warnings)
-            self._fill(page, "price", f"{data['price']:.2f}".rstrip("0").rstrip("."), warnings, required=True)
+            self._fill(page, "price", str(int(data["price"])), warnings, required=True)
             # Shipping: Mercari defaults to its prepaid label and suggests a service from the
             # category — review it in the test-mode screenshot before going live.
 
@@ -463,6 +587,7 @@ class MercariWorker(threading.Thread):
 
             if dry_run:
                 return {"status": "draft", "warnings": warnings, "screenshot": shot_name}
+            self._last_listing = time.time()
 
             button = _first(page, MERCARI_UI["list_button"])
             if not button:
@@ -490,6 +615,8 @@ class MercariWorker(threading.Thread):
             raise MercariError(f"Mercari form error: {str(e).splitlines()[0][:300]}")
         finally:
             page.close()
+            if tmp:
+                tmp.cleanup()
 
     def job_sold_ids(self) -> set[str]:
         """Mercari item ids that have sold (in progress or completed orders)."""
@@ -545,6 +672,7 @@ class MercariWorker(threading.Thread):
             return
         field.click()
         field.fill(value)
+        _pause()
 
     def _pick_category(self, page, warnings: list):
         leaf = MERCARI_UI["category_path"][-1]
@@ -615,7 +743,8 @@ def worker() -> MercariWorker:
     return _worker
 
 
-def queue_publish(item_id: str, listing: dict, game_info: dict, photo_paths: list[Path]):
+def queue_publish(item_id: str, listing: dict, game_info: dict, photo_paths: list[Path],
+                  image_urls: list[str] | None = None):
     """Queue a Mercari listing; the inventory row is updated when it finishes."""
     data = to_mercari(listing, game_info)
     set_listing(item_id, "mercari", status="queued", price=data["price"], error=None)
@@ -633,8 +762,8 @@ def queue_publish(item_id: str, listing: dict, game_info: dict, photo_paths: lis
             set_listing(item_id, "mercari", status="failed", error=str(e)[:500],
                         screenshot=shot if has_shot else None)
 
-    worker().submit(worker().job_publish, data, [str(p) for p in photo_paths], shot, MERCARI_DRY_RUN) \
-        .add_done_callback(done)
+    worker().submit(worker().job_publish, data, [str(p) for p in photo_paths], shot, MERCARI_DRY_RUN,
+                    image_urls or []).add_done_callback(done)
 
 
 def status() -> dict:
@@ -657,3 +786,60 @@ def sold_ids(timeout: int = 180) -> set[str]:
 
 def deactivate(url: str, timeout: int = 120) -> bool:
     return worker().submit(worker().job_deactivate, url).result(timeout=timeout)
+
+
+# ─────────────────────────────────────────
+#  Command line (run in Terminal on the Mac):
+#    ./venv/bin/python crosslist.py login   log in to Mercari in a browser window (saved for the app)
+#    ./venv/bin/python crosslist.py check   still logged in?
+#    ./venv/bin/python crosslist.py probe   dump the sell form's fields → uploads/mercari_screens/probe.json
+#    ./venv/bin/python crosslist.py sold    item ids on your Mercari sold / in-progress pages
+# ─────────────────────────────────────────
+
+PROBE_JS = """() => [...document.querySelectorAll(
+  'input, textarea, select, button, [role=button], [role=combobox], [role=radio], [data-testid]')]
+  .filter(e => e.offsetParent !== null || e.type === 'file')
+  .map(e => ({
+    tag: e.tagName.toLowerCase(), type: e.type || null, name: e.name || null, id: e.id || null,
+    testid: e.dataset.testid || null, placeholder: e.placeholder || null,
+    aria: e.getAttribute('aria-label'), role: e.getAttribute('role'),
+    label: e.labels && e.labels[0] ? e.labels[0].innerText.trim().slice(0, 60) : null,
+    text: (e.innerText || '').trim().slice(0, 60) || null }))"""
+
+
+def _cli():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    w = MercariWorker()  # used directly on this thread (not started)
+    try:
+        if cmd == "login":
+            page = w._context(headless=False, interactive=True).new_page()
+            page.goto(MERCARI_UI["login_url"])
+            input("Log in to Mercari in the browser window, then press Enter here… ")
+            page.close()
+            ok = w.job_check_login()
+            print("✅ Logged in — the app will use this login" if ok else
+                  "❌ Mercari still shows the login page — run this again and finish logging in first")
+        elif cmd == "check":
+            print("✅ Logged in to Mercari" if w.job_check_login() else
+                  "❌ Logged out — run: ./venv/bin/python crosslist.py login")
+        elif cmd == "probe":
+            page = w._context(headless=False, interactive=True).new_page()
+            page.goto(MERCARI_UI["sell_url"])
+            input("On the sell page: log in if asked, open the Category picker so its options show, "
+                  "then press Enter here… ")
+            w.logged_in = "/login" not in page.url
+            fields = page.evaluate(PROBE_JS)
+            MERCARI_SHOTS.mkdir(parents=True, exist_ok=True)
+            (MERCARI_SHOTS / "probe.json").write_text(json.dumps(fields, indent=2))
+            page.screenshot(path=str(MERCARI_SHOTS / "probe.png"), full_page=True)
+            print(f"✅ {len(fields)} fields → uploads/mercari_screens/probe.json (+ probe.png)")
+        elif cmd == "sold":
+            print("Sold / in-progress item ids:", sorted(w.job_sold_ids()) or "none")
+        else:
+            print("Usage: ./venv/bin/python crosslist.py login | check | probe | sold")
+    finally:
+        w._close()
+
+
+if __name__ == "__main__":
+    _cli()

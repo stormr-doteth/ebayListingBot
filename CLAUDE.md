@@ -58,7 +58,8 @@ CLAUDE_BIN=                            # path to `claude` if not on PATH
 
 # Cross-listing (all optional)
 MERCARI_DRY_RUN=true                   # TEST MODE: fill Mercari's form + screenshot, never click List. Set false to go live
-MERCARI_PRICE_MARKUP=0                 # % added to the eBay price on Mercari (e.g. 5)
+MERCARI_PRICE_MARKUP=0                 # % added to the eBay price on Mercari (e.g. 5); Mercari takes whole dollars
+MERCARI_MIN_GAP=90                     # seconds between two live Mercari listings (human pace)
 MERCARI_BROWSER=chrome                 # "chrome" = installed Google Chrome; empty = Playwright's Chromium
 MERCARI_HEADLESS=false                 # real window is less likely to get bot-checked...
 MERCARI_OFFSCREEN=true                 # ...but it's parked off-screen (login window is always on screen)
@@ -96,7 +97,9 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
   retry never double-lists.
 - **Mercari worker**: ONE thread owns a Playwright persistent context (`mercari_profile/`) — Playwright's sync API isn't
   thread-safe, so every Mercari action is a job on its queue. Browser starts on demand, closes after 60 s idle.
-  Log in once via "Log in to Mercari" (opens a window on the Mac for 5 min). All selectors are in `MERCARI_UI`;
+  Log in once via "Log in to Mercari" (opens a window on the Mac for 5 min) or `./venv/bin/python crosslist.py login`.
+  The login is saved to `mercari_profile/login_state.json` (cookies + localStorage) after every job and restored
+  on launch — the persistent profile alone drops session cookies on close, which logged Mercari out. All selectors are in `MERCARI_UI`;
   each is a list of fallbacks. Missing optional steps (brand, category) become warnings stored in `listings.error`
   and shown under the badge; missing required ones (photos, title, description, price) fail the job with a screenshot.
 - **Mapping** (`to_mercari()`): HTML description → plain text + Platform/Region/Part number/Year lines (Mercari has no
@@ -107,7 +110,19 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
   API `getOrders` (matched by SKU); Mercari sales by reading item ids off the in-progress/complete pages. A sale →
   item marked sold → other listings ended (eBay: `POST /offer/{id}/withdraw`; Mercari: item → Edit → Deactivate).
   If ending fails it's `end_failed` and a red banner in the UI says to end it by hand.
+- **Photos**: local uploads if still there, else the permanent `ebayimg.com` URLs saved at eBay publish (`items.data.image_urls`)
+  are downloaded — so cross-listing works after the upload cleanup and for imported listings.
+- **Import eBay listings** (Inventory → button, `import_ebay_listings()`): live Inventory-API offers (everything RetroList
+  listed) become inventory items, protected by the sale sync and cross-listable with “+ Mercari”. Seller Hub / eBay-app
+  listings aren't visible to that API.
+- **Failed ends** (`end_failed`) are retried every sync. If one sells before it's ended → `double_sold` + a 🚨 banner:
+  cancel one of the two orders.
+- **CLI** (Terminal on the Mac): `./venv/bin/python crosslist.py login | check | probe | sold`. `probe` dumps the real
+  sell form's fields to `uploads/mercari_screens/probe.json` (+ `probe.png`) — use it to fix `MERCARI_UI`.
+- `crosslist.py` loads `.env` itself: app.py imports it before its own `load_dotenv()`.
 - Test mode was verified against a local mock of the sell form only — the real Mercari page needs a first dry run.
+- History: a parallel implementation (branch `crosslist-mercari`, `inventory.py`/`mercari.py`) was superseded by this one;
+  its login fix, eBay import, photo fallback, pacing, delist retry and double-sale alert were ported here.
 
 ## Routes
 | Route | Method | Description |
@@ -120,7 +135,9 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
 | `/publish-batch` | POST | JSON `{games: [{…, item_id?}], markets}` → `{results: [...]}` |
 | `/items/status` | POST | `{ids}` → items with per-market listing status (polled while Mercari works) |
 | `/inventory` | GET | Recent items, listings needing attention, sync state |
-| `/sync/run` | POST | Check for sales now and end other listings |
+| `/sync/run` | POST | Check for sales now, end other listings, retry failed ends |
+| `/inventory/import-ebay` | POST | Import live RetroList eBay listings into the inventory |
+| `/items/<id>/list/<market>` | POST | Cross-list an existing inventory item (e.g. imported) |
 | `/mercari/status`, `/mercari/login` | GET/POST | Login state (`?check=1` actually checks) / open the login window on the Mac |
 | `/mercari/screenshot/<id>.png` | GET | Filled-form screenshot (test mode or failure) |
 | `/ebay/auth`, `/ebay/callback` | GET | OAuth consent flow (with `state` check) |
@@ -172,7 +189,6 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 
 ## Known TODOs
 - [ ] Mercari selectors verified only against a mock — tune `MERCARI_UI` after the first real test-mode run
-- [ ] Cross-list games that were already on eBay before inventory.db existed (would need their eBay photos)
 - [ ] Poshmark / Etsy / Depop adapters
 - [ ] eBay condition options per category are hard-coded (6 values); could be fetched from the Metadata API
 - [ ] No "save as draft" (unpublished offer) option yet
