@@ -140,7 +140,9 @@ game, keyed by eBay SKU, with the permanent `ebayimg.com` image URLs) and `listi
 
 **Mercari** has no public seller API — `mercari.py` drives mercari.com with Playwright in a persistent, logged-in
 profile (`mercari_profile/`, gitignored), headless by default, at a human pace (`MERCARI_MIN_GAP`, random pauses).
-- One-time: `./venv/bin/playwright install chromium`, then `./venv/bin/python mercari.py login`.
+- One-time: `./venv/bin/playwright install chromium`, then `./venv/bin/python mercari.py login` (`check` = still logged in?).
+- The login is saved to `mercari_profile/login_state.json` (cookies + localStorage) and restored on every launch —
+  the persistent profile alone drops session cookies when the browser closes, which logged Mercari out.
 - **All locators are in `SELECTORS`** at the top of mercari.py. They were written without access to the live
   site and tested only against a mock form — if a step fails, run `./venv/bin/python mercari.py probe` (dumps the
   sell form's fields to `mercari_debug/probe.json` + screenshot) and fix the table. Failures save a screenshot to

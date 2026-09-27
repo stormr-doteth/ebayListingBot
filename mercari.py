@@ -7,6 +7,7 @@ home connection, at a human pace.
 One-time setup (on the Mac):
     ./venv/bin/pip install playwright && ./venv/bin/playwright install chromium
     ./venv/bin/python mercari.py login      # a browser opens — log in to Mercari, then press Enter here
+    ./venv/bin/python mercari.py check      # still logged in?
 
 Mercari changes its site now and then. If listing breaks:
     ./venv/bin/python mercari.py probe      # dumps the sell form's fields to mercari_debug/probe.json
@@ -35,6 +36,7 @@ import inventory
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")  # config below is read at import time
 PROFILE_DIR = BASE_DIR / "mercari_profile"
+STATE_FILE = PROFILE_DIR / "login_state.json"   # cookies + localStorage, incl. session cookies Chrome drops on close
 DEBUG_DIR = BASE_DIR / "mercari_debug"
 
 
@@ -120,11 +122,50 @@ def browser(headless: bool | None = None):
             kwargs.pop("channel")  # Chrome not installed → Playwright's Chromium
             ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), **kwargs)
         try:
+            _restore_login(ctx)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.set_default_timeout(15000)
             yield page
+            _save_login(ctx)  # Mercari refreshes its tokens — keep the newest
         finally:
             ctx.close()
+
+
+def _save_login(ctx):
+    """Save cookies + localStorage. A persistent profile alone loses session cookies when the
+    browser closes, which logs you out of Mercari every time."""
+    try:
+        PROFILE_DIR.mkdir(exist_ok=True)
+        ctx.storage_state(path=str(STATE_FILE))
+        STATE_FILE.chmod(0o600)
+    except Exception as e:
+        print(f"[mercari] Couldn't save login: {e}")
+
+
+def _restore_login(ctx):
+    if not STATE_FILE.exists():
+        return
+    import json
+    try:
+        state = json.loads(STATE_FILE.read_text())
+    except (ValueError, OSError):
+        return
+    if state.get("cookies"):
+        ctx.add_cookies(state["cookies"])
+    for origin in state.get("origins", []):
+        items = {i["name"]: i["value"] for i in origin.get("localStorage", [])}
+        if items:
+            ctx.add_init_script(
+                "(([origin, items]) => { if (location.origin !== origin) return;"
+                " for (const [k, v] of Object.entries(items)) if (localStorage.getItem(k) === null)"
+                " localStorage.setItem(k, v); })(" + json.dumps([origin["origin"], items]) + ")")
+
+
+def logged_in(page) -> bool:
+    """Open the sell page and see whether Mercari sends us to log in."""
+    page.goto(SELL_URL, wait_until="domcontentloaded")
+    _pause(2, 3)
+    return "/login" not in page.url and "/signup" not in page.url
 
 
 def _pause(lo: float = 0.6, hi: float = 1.8):
@@ -358,17 +399,28 @@ def _cli():
         with browser(headless=False) as page:
             page.goto(LOGIN_URL)
             input("Log in to Mercari in the browser window, then press Enter here… ")
-        print(f"Saved the Mercari login in {PROFILE_DIR.name}/")
+            _save_login(page.context)
+            ok = logged_in(page)
+        print("✅ Logged in — saved to mercari_profile/" if ok else
+              "❌ Mercari still shows the login page — run this again and finish logging in before pressing Enter")
+    elif cmd == "check":
+        with browser() as page:
+            print("✅ Still logged in to Mercari" if logged_in(page) else
+                  "❌ Logged out — run: ./venv/bin/python mercari.py login")
     elif cmd == "probe":
         with browser(headless=False) as page:
-            page.goto(SELL_URL, wait_until="domcontentloaded")
-            _pause(3, 4)
-            _check_logged_in(page)
-            input("Open any dropdowns you want captured (e.g. category), then press Enter… ")
+            if not logged_in(page):
+                page.goto(LOGIN_URL)
+                input("You're logged out — log in in the browser window, then press Enter here… ")
+                _save_login(page.context)
+                if not logged_in(page):
+                    print("❌ Still not logged in — try again")
+                    return
+            input("On the sell page: click Category so its options show, then press Enter here… ")
             fields = page.evaluate(PROBE_JS)
             DEBUG_DIR.mkdir(exist_ok=True)
             (DEBUG_DIR / "probe.json").write_text(json.dumps(fields, indent=2))
-            print(f"{len(fields)} elements → mercari_debug/probe.json, screenshot → {_screenshot(page, 'probe')}")
+            print(f"✅ {len(fields)} elements → mercari_debug/probe.json, screenshot → {_screenshot(page, 'probe')}")
     elif cmd == "sold":
         with browser() as page:
             found = _sold_page_ids(page)
