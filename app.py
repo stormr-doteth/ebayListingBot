@@ -18,6 +18,7 @@ import shutil
 import secrets
 import subprocess
 import sys
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,10 +27,12 @@ from xml.sax.saxutils import escape as xml_escape
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for, send_file
 from markupsafe import escape
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import pillow_heif
+
+import crosslist
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -951,9 +954,168 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     if pub_resp.status_code in (200, 201):
         listing_id = pub_resp.json().get("listingId")
         print(f"[publish] Listed {sku} → {listing_id}")
-        return {"success": True, "listing_id": listing_id, "sku": sku,
+        return {"success": True, "listing_id": listing_id, "sku": sku, "offer_id": offer_id,
                 "url": f"https://www.{'sandbox.' if EBAY_SANDBOX else ''}ebay.com/itm/{listing_id}"}
     return {"success": False, "error": _ebay_error("Publish error", pub_resp), "sku": sku}
+
+
+def ebay_end_listing(offer_id: str) -> tuple[bool, str]:
+    """End a live eBay listing (withdraw its offer) — used when the item sold elsewhere."""
+    token = get_ebay_token()
+    if not token or not offer_id:
+        return False, "no eBay token or offer id"
+    resp = requests.post(f"{EBAY_BASE_URL}/sell/inventory/v1/offer/{offer_id}/withdraw", timeout=30,
+                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    if resp.status_code in (200, 204):
+        return True, ""
+    return False, _ebay_error("Withdraw error", resp)
+
+
+def ebay_sold_skus(since: float) -> set[str]:
+    """SKUs of RetroList items in eBay orders created since `since` (Fulfillment API)."""
+    token = get_ebay_token()
+    if not token:
+        raise RuntimeError("no eBay token")
+    start = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(since - 86400))
+    skus, url = set(), f"{EBAY_BASE_URL}/sell/fulfillment/v1/order"
+    params = {"filter": f"creationdate:[{start}..]", "limit": 200}
+    while url:
+        resp = requests.get(url, params=params, timeout=30, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code != 200:
+            raise RuntimeError(_ebay_error("Orders error", resp))
+        body = resp.json()
+        for order in body.get("orders", []):
+            if order.get("cancelStatus", {}).get("cancelState") == "CANCELED":
+                continue
+            skus.update(li.get("sku") for li in order.get("lineItems", []) if li.get("sku"))
+        url, params = body.get("next"), None
+    return skus
+
+
+# ─────────────────────────────────────────
+#  Cross-listing: publish to several marketplaces, end the rest when one sells
+# ─────────────────────────────────────────
+
+AUTO_END = _env_bool("CROSSLIST_AUTO_END", True)          # end other listings when an item sells
+SYNC_MINUTES = int(os.environ.get("CROSSLIST_SYNC_MINUTES", "10"))
+_sync_state = {"last_run": 0.0, "last_error": "", "running": False}
+_sync_lock = threading.Lock()
+
+
+def publish_item(listing: dict, game_info: dict, photos: list[str], markets: list[str],
+                 item_id: str | None = None) -> dict:
+    """Publish one game to the chosen marketplaces. eBay runs now; Mercari is queued (a browser
+    fills its form in the background) and its status is polled via /items/status.
+    Passing the item_id of an earlier attempt only retries marketplaces not already live/queued,
+    so tapping Publish twice never lists the same game twice."""
+    markets = [m for m in dict.fromkeys(markets or ["ebay"]) if m in crosslist.MARKETS]
+    if not markets:
+        return {"success": False, "error": "Pick at least one marketplace"}
+    if item_id and crosslist.get_item(item_id):
+        crosslist.update_item_data(item_id, listing, game_info, photos)
+    else:
+        item_id = crosslist.create_item(listing, game_info, photos)
+    existing = crosslist.get_listings(item_id)
+    out: dict = {"item_id": item_id, "results": {}}
+
+    for market in markets:
+        if existing.get(market, {}).get("status") in ("listed", "queued", "sold"):
+            out["results"][market] = {"success": True, "status": existing[market]["status"],
+                                      "url": existing[market].get("url"), "skipped": True}
+            continue
+        if market == "ebay":
+            r = post_to_ebay(listing, game_info, photos)
+            crosslist.set_listing(item_id, "ebay", status="listed" if r["success"] else "failed",
+                                  external_id=r.get("listing_id"), sku=r.get("sku"), offer_id=r.get("offer_id"),
+                                  url=r.get("url"), price=listing.get("suggested_price"), error=r.get("error"))
+            out["results"]["ebay"] = {**r, "status": "listed" if r["success"] else "failed"}
+        elif market == "mercari":
+            paths = [p for p in (resolve_photo(ref) for ref in photos) if p]
+            if not paths:
+                out["results"]["mercari"] = {"success": False, "status": "failed", "error": "Photos not found — analyze again"}
+                crosslist.set_listing(item_id, "mercari", status="failed", error="Photos not found")
+                continue
+            crosslist.queue_publish(item_id, listing, game_info, paths)
+            out["results"]["mercari"] = {"success": True, "status": "queued",
+                                         "price": crosslist.mercari_price(listing.get("suggested_price") or 0)}
+
+    out["success"] = any(r.get("success") for r in out["results"].values())
+    ebay = out["results"].get("ebay") or {}
+    if ebay.get("success"):  # keep the old single-market response fields for the eBay badge
+        out.update(listing_id=ebay.get("listing_id"), url=ebay.get("url"))
+    out["error"] = "; ".join(f"{m}: {r['error']}" for m, r in out["results"].items() if r.get("error")) or None
+    return out
+
+
+def end_listing(row: dict) -> tuple[bool, str]:
+    """End one marketplace listing of an item that sold somewhere else."""
+    try:
+        if row["market"] == "ebay":
+            return ebay_end_listing(row.get("offer_id"))
+        if row["market"] == "mercari":
+            if row["status"] == "queued" or not row.get("url"):
+                return False, "Mercari listing was still being created — check Mercari"
+            return crosslist.deactivate(row["url"]), ""
+    except Exception as e:
+        return False, str(e)
+    return False, f"unknown marketplace {row['market']}"
+
+
+def sync_sales() -> dict:
+    """Find items that sold on any marketplace and end their other listings."""
+    if not _sync_lock.acquire(blocking=False):
+        return {"skipped": "already running"}
+    _sync_state["running"] = True
+    sold, errors = [], []
+    try:
+        ebay_live = crosslist.live_listings("ebay")
+        if ebay_live:
+            try:
+                skus = ebay_sold_skus(min(r["created_at"] for r in ebay_live))
+                sold += [(r["item_id"], "ebay") for r in ebay_live if r.get("sku") in skus]
+            except Exception as e:
+                errors.append(f"eBay: {e}")
+
+        mercari_live = crosslist.live_listings("mercari")
+        if mercari_live:
+            try:
+                ids = crosslist.sold_ids()
+                sold += [(r["item_id"], "mercari") for r in mercari_live if r.get("external_id") in ids]
+            except Exception as e:
+                errors.append(f"Mercari: {e}")
+
+        ended = []
+        for item_id, market in sold:
+            others = crosslist.mark_sold(item_id, market)
+            title = (crosslist.get_item(item_id) or {}).get("title", item_id)
+            print(f"[sync] SOLD on {market}: {title}")
+            for row in others:
+                if not AUTO_END:
+                    crosslist.set_listing(item_id, row["market"], status="end_failed",
+                                          error=f"Sold on {market} — auto-ending is off, end this by hand")
+                    continue
+                ok, err = end_listing(row)
+                crosslist.set_listing(item_id, row["market"], status="ended" if ok else "end_failed",
+                                      error=None if ok else f"Sold on {market}; couldn't end automatically: {err}")
+                print(f"[sync]   {'ended' if ok else 'COULD NOT END'} {row['market']} listing {err}")
+                ended.append({"market": row["market"], "ok": ok, "title": title})
+        _sync_state["last_error"] = "; ".join(errors)
+        return {"sold": len(sold), "ended": ended, "errors": errors}
+    finally:
+        _sync_state.update(last_run=time.time(), running=False)
+        _sync_lock.release()
+
+
+def sync_loop():
+    """Background: check for sales every CROSSLIST_SYNC_MINUTES (0 = off)."""
+    while SYNC_MINUTES > 0:
+        time.sleep(SYNC_MINUTES * 60)
+        try:
+            result = sync_sales()
+            if result.get("sold"):
+                print(f"[sync] {result}")
+        except Exception as e:
+            print(f"[sync] failed: {e}")
 
 
 # ─────────────────────────────────────────
@@ -1230,17 +1392,20 @@ def analyze_batch():
 @app.route("/publish", methods=["POST"])
 @require_pin
 def publish():
+    """JSON {listing, game_info, photos, markets: ["ebay", "mercari"], item_id?} → publish_item()."""
     data = request.get_json(silent=True) or {}
     if not data.get("listing") or not data.get("game_info"):
         return jsonify({"success": False, "error": "Missing listing data"}), 400
-    return jsonify(post_to_ebay(data["listing"], data["game_info"], data.get("photos", [])))
+    return jsonify(publish_item(data["listing"], data["game_info"], data.get("photos", []),
+                                data.get("markets") or ["ebay"], data.get("item_id")))
 
 
 @app.route("/publish-batch", methods=["POST"])
 @require_pin
 def publish_batch():
-    """Publish several listings. JSON {games: [{listing, game_info, photos}]} → {results: [...]}."""
-    games = (request.get_json(silent=True) or {}).get("games", [])
+    """Publish several listings. JSON {games: [{listing, game_info, photos, item_id?}], markets} → {results: [...]}."""
+    body = request.get_json(silent=True) or {}
+    games, markets = body.get("games", []), body.get("markets") or ["ebay"]
     if not games:
         return jsonify({"error": "No games to publish"}), 400
     results = []
@@ -1248,9 +1413,60 @@ def publish_batch():
         if not game.get("listing") or not game.get("game_info"):
             result = {"success": False, "error": "Missing listing data"}
         else:
-            result = post_to_ebay(game["listing"], game["game_info"], game.get("photos", []))
+            result = publish_item(game["listing"], game["game_info"], game.get("photos", []),
+                                  game.get("markets") or markets, game.get("item_id"))
         results.append({**result, "game_index": i})
     return jsonify({"results": results})
+
+
+@app.route("/items/status", methods=["POST"])
+@require_pin
+def items_status():
+    """JSON {ids: [...]} → current listing statuses (the UI polls this while Mercari works)."""
+    ids = [str(i) for i in (request.get_json(silent=True) or {}).get("ids", [])][:100]
+    return jsonify({"items": crosslist.item_summaries(ids) if ids else []})
+
+
+@app.route("/inventory")
+@require_pin
+def inventory():
+    return jsonify({"items": crosslist.item_summaries(limit=200), "attention": crosslist.needs_attention(),
+                    "sync": {**_sync_state, "minutes": SYNC_MINUTES, "auto_end": AUTO_END}})
+
+
+@app.route("/sync/run", methods=["POST"])
+@require_pin
+def sync_run():
+    return jsonify(sync_sales())
+
+
+@app.route("/mercari/status")
+@require_pin
+def mercari_status():
+    st = crosslist.status()
+    if st["logged_in"] is None and request.args.get("check"):
+        try:
+            st["logged_in"] = crosslist.check_login()
+        except Exception as e:
+            st["error"] = str(e)
+    return jsonify(st)
+
+
+@app.route("/mercari/login", methods=["POST"])
+@require_pin
+def mercari_login():
+    """Opens a browser window ON THE MAC at Mercari's login page — log in there once."""
+    crosslist.open_login()
+    return jsonify({"success": True})
+
+
+@app.route("/mercari/screenshot/<name>")
+@require_pin
+def mercari_screenshot(name: str):
+    """Test-mode screenshot of the filled-in Mercari form."""
+    if not re.fullmatch(r"[0-9a-f]{12}\.png", name) or not (crosslist.MERCARI_SHOTS / name).is_file():
+        return "Not found", 404
+    return send_file(crosslist.MERCARI_SHOTS / name, mimetype="image/png")
 
 
 # ─────────────────────────────────────────
@@ -1259,6 +1475,7 @@ def publish_batch():
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 cleanup_old_uploads()
+crosslist.init_db()
 
 if __name__ == "__main__":
     print(f"[startup] Claude CLI: {CLAUDE_BIN} (model: {CLAUDE_MODEL})")
@@ -1267,4 +1484,7 @@ if __name__ == "__main__":
     print(f"[startup] eBay: {'SANDBOX' if EBAY_SANDBOX else 'PRODUCTION'}, token available: {bool(get_ebay_token())}")
     if HOST != "127.0.0.1" and not APP_PIN:
         print("[startup] WARNING: no APP_PIN set — anyone on your network can open the app and publish listings")
+    print(f"[startup] Mercari: {'TEST MODE (fills the form, never posts)' if crosslist.MERCARI_DRY_RUN else 'LIVE'}, "
+          f"sale check every {SYNC_MINUTES} min, auto-end {'on' if AUTO_END else 'off'}")
+    threading.Thread(target=sync_loop, daemon=True, name="sync").start()
     app.run(host=HOST, port=PORT, debug=False, threaded=True)

@@ -7,6 +7,7 @@ Photograph a retro game → get an honest, well-priced eBay listing → publish 
 - **Flags** tell you what to double-check before you publish.
 - **Photo dump**: select every photo of a pile of games at once — it sorts them by when they were taken and splits them into one listing per game (you can fix any split before analyzing).
 - **Batch mode** analyzes several games in parallel.
+- **Cross-list to Mercari**: tick “Mercari” and each game is listed there too. When it sells on either site, the other listing is ended automatically.
 
 AI runs through the [Claude Code](https://claude.com/claude-code) CLI on your own Mac, so it uses your Claude plan instead of a paid API key.
 
@@ -30,4 +31,13 @@ APP_PIN=1234                    # recommended
 ```bash
 ./venv/bin/python app.py
 ```
+### Mercari (optional)
+```bash
+./venv/bin/playwright install chromium   # only needed if Google Chrome isn't installed
+```
+In the app, tick **Mercari**, tap **Log in to Mercari** and log in in the window that opens on your Mac.
+It starts in **test mode** (`MERCARI_DRY_RUN=true`): it fills Mercari's form and saves a screenshot, but never posts.
+Check a few screenshots (tap the yellow “test fill” badge), then set `MERCARI_DRY_RUN=false` in `.env` and restart.
+Mercari has no public API, so this drives a browser — keep it to normal human volumes.
+
 Then open `http://<your-mac-ip>:8080` on your phone (same Wi-Fi, or use Tailscale from anywhere).
