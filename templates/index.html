@@ -1109,7 +1109,7 @@
     }
     .mbadge.listed, .mbadge.sold { border-color: var(--green); color: var(--green); }
     .mbadge.queued, .mbadge.draft { border-color: var(--accent2); color: var(--accent2); }
-    .mbadge.failed, .mbadge.end_failed { border-color: #ff4444; color: #ff6666; }
+    .mbadge.failed, .mbadge.end_failed, .mbadge.double_sold { border-color: #ff4444; color: #ff6666; }
     .mbadge.ended { color: var(--muted); }
     .mnote { font-size: 0.68rem; color: var(--muted); margin-top: 6px; text-align: center; word-break: break-word; }
     .mnote.bad { color: #ff6666; }
@@ -1396,6 +1396,7 @@
     </div>
     <div class="inv-toolbar">
       <button class="btn-small primary" id="sync-btn" onclick="runSync()">Check for sales now</button>
+      <button class="btn-small" id="import-btn" onclick="importEbay()" title="Add games already live on eBay (listed by RetroList) so they're protected and can go on Mercari">Import eBay listings</button>
       <span id="sync-info"></span>
     </div>
     <div id="inventory-list"></div>
@@ -1641,7 +1642,8 @@
   const MARKET_NAMES = { ebay: 'eBay', mercari: 'Mercari' };
   const STATUS_TEXT = {
     queued: '⏳ working…', listed: '✓ listed', draft: '🧪 test fill — view', failed: '✗ failed',
-    sold: '💰 sold', ended: 'ended (sold elsewhere)', end_failed: '⚠ end this by hand',
+    sold: '💰 sold', ended: 'ended (sold elsewhere)', end_failed: '⚠ still up — retrying',
+    double_sold: '🚨 double sale',
   };
 
   const selectedMarkets = () => ['ebay', 'mercari'].filter(m => document.getElementById('opt-' + m).checked);
@@ -1668,7 +1670,7 @@
   // Errors (failed) and warnings (e.g. "set the category by hand") under the badges
   function notesHtml(listings) {
     return Object.entries(listings || {}).filter(([, l]) => l.error).map(([market, l]) => {
-      const bad = ['failed', 'end_failed'].includes(l.status);
+      const bad = ['failed', 'end_failed', 'double_sold'].includes(l.status);
       return `<div class="mnote${bad ? ' bad' : ''}">${esc(MARKET_NAMES[market] || market)}: ${esc(l.error)}</div>`;
     }).join('');
   }
@@ -1736,12 +1738,39 @@
         <div class="inv-row">
           <strong>${it.status === 'sold' ? '💰 ' : ''}${esc(it.title)}</strong>
           <span style="color:var(--muted)">${money(it.price)} · ${new Date(it.created_at * 1000).toLocaleDateString()}${it.sold_on ? ` · sold on ${esc(MARKET_NAMES[it.sold_on] || it.sold_on)}` : ''}</span>
-          <div class="market-badges">${badgesHtml(it.listings)}</div>
+          <div class="market-badges">${badgesHtml(it.listings)}${
+            it.status !== 'sold' && (!it.listings.mercari || ['failed', 'draft'].includes(it.listings.mercari.status))
+              ? `<button class="btn-small" onclick="listExisting('${esc(it.id)}', 'mercari', this)">+ Mercari</button>` : ''}</div>
           ${notesHtml(it.listings)}
         </div>`).join('') : '<div class="mnote">Nothing published yet — games you publish from now on show up here.</div>';
     } catch (e) {
       list.innerHTML = '<div class="mnote bad">Could not load inventory</div>';
     }
+  }
+
+  async function importEbay() {
+    const btn = document.getElementById('import-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+    try {
+      const r = await postJson('/inventory/import-ebay', {});
+      showToast(r.success ? `Imported ${r.added} eBay listing${r.added === 1 ? '' : 's'}` : `✗ ${r.error}`);
+    } catch (e) {}
+    btn.disabled = false;
+    btn.textContent = 'Import eBay listings';
+    openInventory();
+  }
+
+  async function listExisting(id, market, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Queued…';
+    try {
+      const r = await postJson(`/items/${encodeURIComponent(id)}/list/${market}`, {});
+      if (!r.success) showToast(`✗ ${r.error}`);
+      checkMercariStatus();
+      pollItems([id], () => {}).then(() => { if (document.getElementById('inventory-modal').classList.contains('open')) openInventory(); });
+    } catch (e) {}
+    openInventory();
   }
 
   async function runSync() {
@@ -1765,8 +1794,11 @@
       const data = await (await fetch('/inventory')).json();
       const banner = document.getElementById('attention-banner');
       if (data.attention.length) {
-        banner.innerHTML = `⚠ Sold, but still listed — end by hand: ` +
-          data.attention.map(a => `<a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.title)} (${esc(MARKET_NAMES[a.market] || a.market)})</a>`).join(', ');
+        const doubles = data.attention.filter(a => a.status === 'double_sold');
+        const stuck = data.attention.filter(a => a.status !== 'double_sold');
+        const links = (rows) => rows.map(a => `<a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.title)} (${esc(MARKET_NAMES[a.market] || a.market)})</a>`).join(', ');
+        banner.innerHTML = (doubles.length ? `🚨 Sold twice — cancel one order: ${links(doubles)}. ` : '') +
+          (stuck.length ? `⚠ Sold, but still listed (retrying automatically — end by hand if it persists): ${links(stuck)}` : '');
         banner.style.display = 'block';
       } else {
         banner.style.display = 'none';
