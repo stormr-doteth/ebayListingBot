@@ -1099,6 +1099,32 @@
     .ai-comps a { color: var(--accent); }
     .batch-card-flags { color: var(--accent2); font-size: 0.7rem; white-space: nowrap; }
 
+    /* ── Cross-listing ── */
+    .options-row .markets-label { color: var(--muted); }
+    .market-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; justify-content: center; }
+    .batch-card-markets { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+    .mbadge {
+      font-size: 0.68rem; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text); text-decoration: none; white-space: nowrap;
+    }
+    .mbadge.listed, .mbadge.sold { border-color: var(--green); color: var(--green); }
+    .mbadge.queued, .mbadge.draft { border-color: var(--accent2); color: var(--accent2); }
+    .mbadge.failed, .mbadge.end_failed { border-color: #ff4444; color: #ff6666; }
+    .mbadge.ended { color: var(--muted); }
+    .mnote { font-size: 0.68rem; color: var(--muted); margin-top: 6px; text-align: center; word-break: break-word; }
+    .mnote.bad { color: #ff6666; }
+    .batch-card-markets .mnote { text-align: left; width: 100%; margin-top: 0; }
+    .inv-row { border-bottom: 1px solid var(--border); padding: 10px 0; font-size: 0.75rem; }
+    .inv-row strong { display: block; margin-bottom: 4px; }
+    .inv-row .market-badges { justify-content: flex-start; margin-top: 4px; }
+    .inv-row .mnote { text-align: left; }
+    .inv-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 0.7rem; color: var(--muted); }
+    .btn-small {
+      font-family: var(--font-mono); font-size: 11px; padding: 6px 14px; border-radius: 4px;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;
+    }
+    .btn-small.primary { border-color: var(--accent); color: var(--accent); background: transparent; }
+
   </style>
 </head>
 <body>
@@ -1118,7 +1144,16 @@
       <button class="btn-link-small" id="ebay-setup-btn" onclick="openEbaySetup()" title="eBay app keys">⚙ eBay setup</button>
       <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">Disconnect</button>
     </div>
+    <div class="ebay-status-row" style="display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap;">
+      <div class="ebay-status" id="mercari-status" style="display:none">
+        <span class="ebay-dot disconnected" id="mercari-dot"></span>
+        <span class="ebay-status-text" id="mercari-status-text">Mercari</span>
+      </div>
+      <button class="btn-small primary" id="mercari-login-btn" onclick="mercariLogin()" style="display:none">Log in to Mercari</button>
+      <button class="btn-small" onclick="openInventory()">📦 Inventory</button>
+    </div>
     <div class="ebay-banner" id="ebay-banner"></div>
+    <div class="ebay-banner" id="attention-banner"></div>
   </header>
 
   <!-- Upload section -->
@@ -1142,6 +1177,11 @@
 
     <div class="options-row">
       <label><input type="checkbox" id="opt-tested" checked /> Tested &amp; working</label>
+    </div>
+    <div class="options-row">
+      <span class="markets-label">List on:</span>
+      <label><input type="checkbox" id="opt-ebay" checked /> eBay</label>
+      <label><input type="checkbox" id="opt-mercari" /> Mercari</label>
     </div>
 
     <button class="btn-analyze" id="analyze-btn" disabled>
@@ -1296,6 +1336,7 @@
     <!-- Actions -->
     <button class="btn-preview" id="preview-desc-btn">👁 Preview Description</button>
     <button class="btn-publish" id="publish-btn">🚀 Publish to eBay</button>
+    <div id="publish-status"></div>
 
     <div style="text-align:center">
       <span class="reset-link" id="reset-btn">← List another game</span>
@@ -1346,6 +1387,21 @@
   </div>
 </div>
 
+<!-- Inventory: everything published, per marketplace -->
+<div class="modal-overlay" id="inventory-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <strong>Inventory</strong>
+      <button class="modal-close" onclick="document.getElementById('inventory-modal').classList.remove('open')">✕</button>
+    </div>
+    <div class="inv-toolbar">
+      <button class="btn-small primary" id="sync-btn" onclick="runSync()">Check for sales now</button>
+      <span id="sync-info"></span>
+    </div>
+    <div id="inventory-list"></div>
+  </div>
+</div>
+
 <div id="toast">✅ Listed on eBay!</div>
 
 <script>
@@ -1361,7 +1417,7 @@
   ];
 
   // Remember the option checkboxes between visits
-  ['opt-tested'].forEach(id => {
+  ['opt-tested', 'opt-ebay', 'opt-mercari'].forEach(id => {
     const el = document.getElementById(id);
     try {
       const saved = localStorage.getItem(id);
@@ -1581,6 +1637,157 @@
 
   checkEbayStatus();
 
+  // ── Cross-listing ───────────────────────
+  const MARKET_NAMES = { ebay: 'eBay', mercari: 'Mercari' };
+  const STATUS_TEXT = {
+    queued: '⏳ working…', listed: '✓ listed', draft: '🧪 test fill — view', failed: '✗ failed',
+    sold: '💰 sold', ended: 'ended (sold elsewhere)', end_failed: '⚠ end this by hand',
+  };
+
+  const selectedMarkets = () => ['ebay', 'mercari'].filter(m => document.getElementById('opt-' + m).checked);
+
+  function publishLabel() {
+    const m = selectedMarkets();
+    return m.length ? `🚀 Publish to ${m.map(x => MARKET_NAMES[x]).join(' + ')}` : 'Pick a marketplace ↑';
+  }
+
+  // One badge per marketplace; links to the live listing (or the Mercari test-mode screenshot)
+  function badgesHtml(listings) {
+    return Object.entries(listings || {}).map(([market, l]) => {
+      let href = l.url || '';
+      if (l.status === 'draft' && l.screenshot) href = `/mercari/screenshot/${encodeURIComponent(l.screenshot)}`;
+      if (l.status === 'failed' && l.screenshot) href = `/mercari/screenshot/${encodeURIComponent(l.screenshot)}`;
+      const text = `${MARKET_NAMES[market] || market}: ${STATUS_TEXT[l.status] || l.status}`;
+      const title = esc(l.error || '');
+      return href
+        ? `<a class="mbadge ${esc(l.status)}" href="${esc(href)}" target="_blank" rel="noopener" title="${title}">${esc(text)}</a>`
+        : `<span class="mbadge ${esc(l.status)}" title="${title}">${esc(text)}</span>`;
+    }).join('');
+  }
+
+  // Errors (failed) and warnings (e.g. "set the category by hand") under the badges
+  function notesHtml(listings) {
+    return Object.entries(listings || {}).filter(([, l]) => l.error).map(([market, l]) => {
+      const bad = ['failed', 'end_failed'].includes(l.status);
+      return `<div class="mnote${bad ? ' bad' : ''}">${esc(MARKET_NAMES[market] || market)}: ${esc(l.error)}</div>`;
+    }).join('');
+  }
+
+  // /publish results → the same shape /items/status returns
+  const resultsToListings = (results) => Object.fromEntries(Object.entries(results || {}).map(
+    ([m, r]) => [m, { status: r.status || (r.success ? 'listed' : 'failed'), url: r.url, error: r.error }]));
+
+  const anyFailed = (listings) => Object.values(listings || {}).some(l => l.status === 'failed');
+
+  // Mercari listings are made in the background — poll until none is still working
+  async function pollItems(ids, onItem) {
+    const started = Date.now();
+    while (Date.now() - started < 20 * 60 * 1000) {
+      await new Promise(r => setTimeout(r, 4000));
+      let items = [];
+      try { items = (await postJson('/items/status', { ids })).items || []; } catch (e) { continue; }
+      items.forEach(onItem);
+      if (!items.some(it => Object.values(it.listings).some(l => l.status === 'queued'))) break;
+    }
+    checkMercariStatus();
+  }
+
+  async function checkMercariStatus(check = false) {
+    const box = document.getElementById('mercari-status');
+    const loginBtn = document.getElementById('mercari-login-btn');
+    if (!document.getElementById('opt-mercari').checked) {
+      box.style.display = loginBtn.style.display = 'none';
+      return;
+    }
+    box.style.display = '';
+    try {
+      const st = await (await fetch('/mercari/status' + (check ? '?check=1' : ''))).json();
+      const dot = document.getElementById('mercari-dot');
+      const text = document.getElementById('mercari-status-text');
+      const working = st.queued + (st.busy ? 1 : 0);
+      dot.className = 'ebay-dot ' + (st.logged_in ? 'connected' : st.logged_in === false ? 'disconnected' : 'legacy');
+      text.textContent = (st.logged_in ? 'Mercari Connected' : st.logged_in === false ? 'Mercari: not logged in' : 'Mercari: not checked')
+        + (st.dry_run ? ' · test mode' : '') + (working ? ` · ${working} working` : '');
+      loginBtn.style.display = st.logged_in ? 'none' : '';
+    } catch (e) {
+      console.error('Mercari status check failed:', e);
+    }
+  }
+
+  async function mercariLogin() {
+    await postJson('/mercari/login', {});
+    alert('A Mercari login window is opening ON YOUR MAC. Log in there within 5 minutes — ' +
+          'it stays logged in after that.');
+    setTimeout(() => checkMercariStatus(), 30000);
+  }
+
+  async function openInventory() {
+    document.getElementById('inventory-modal').classList.add('open');
+    const list = document.getElementById('inventory-list');
+    list.innerHTML = '<div class="mnote">Loading…</div>';
+    try {
+      const data = await (await fetch('/inventory')).json();
+      const s = data.sync;
+      document.getElementById('sync-info').textContent =
+        (s.minutes ? `Auto-check every ${s.minutes} min` : 'Auto-check off') +
+        (s.last_run ? ` · last ${new Date(s.last_run * 1000).toLocaleTimeString()}` : '') +
+        (s.last_error ? ` · ⚠ ${s.last_error}` : '');
+      list.innerHTML = data.items.length ? data.items.map(it => `
+        <div class="inv-row">
+          <strong>${it.status === 'sold' ? '💰 ' : ''}${esc(it.title)}</strong>
+          <span style="color:var(--muted)">${money(it.price)} · ${new Date(it.created_at * 1000).toLocaleDateString()}${it.sold_on ? ` · sold on ${esc(MARKET_NAMES[it.sold_on] || it.sold_on)}` : ''}</span>
+          <div class="market-badges">${badgesHtml(it.listings)}</div>
+          ${notesHtml(it.listings)}
+        </div>`).join('') : '<div class="mnote">Nothing published yet — games you publish from now on show up here.</div>';
+    } catch (e) {
+      list.innerHTML = '<div class="mnote bad">Could not load inventory</div>';
+    }
+  }
+
+  async function runSync() {
+    const btn = document.getElementById('sync-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+      const r = await postJson('/sync/run', {});
+      showToast(r.skipped ? 'Already checking…' : r.sold ? `💰 ${r.sold} sold — other listings ended` :
+        r.errors && r.errors.length ? `⚠ ${r.errors[0]}` : 'No new sales');
+    } catch (e) {}
+    btn.disabled = false;
+    btn.textContent = 'Check for sales now';
+    openInventory();
+    checkAttention();
+  }
+
+  // Items that sold but are still listed somewhere else — the one thing not to miss
+  async function checkAttention() {
+    try {
+      const data = await (await fetch('/inventory')).json();
+      const banner = document.getElementById('attention-banner');
+      if (data.attention.length) {
+        banner.innerHTML = `⚠ Sold, but still listed — end by hand: ` +
+          data.attention.map(a => `<a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.title)} (${esc(MARKET_NAMES[a.market] || a.market)})</a>`).join(', ');
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    } catch (e) {}
+  }
+
+  function updatePublishLabels() {
+    if (!publishBtn.dataset.done) publishBtn.textContent = publishLabel();
+    updatePublishBatchCount();
+  }
+
+  document.getElementById('opt-mercari').addEventListener('change', (e) => {
+    checkMercariStatus(e.target.checked);
+    updatePublishLabels();
+  });
+  document.getElementById('opt-ebay').addEventListener('change', updatePublishLabels);
+  checkMercariStatus(true);
+  checkAttention();
+  setInterval(checkAttention, 5 * 60 * 1000);
+
   // ── State ──────────────────────────────
   let currentData = null;
   let selectedCondition = 'USED_GOOD';
@@ -1609,6 +1816,7 @@
   const editTitle = document.getElementById('edit-title');
   const editPrice = document.getElementById('edit-price');
   const publishBtn = document.getElementById('publish-btn');
+  publishBtn.textContent = publishLabel();
 
   // ── Photo handling ─────────────────────
   photoInput.addEventListener('change', (e) => {
@@ -1837,7 +2045,11 @@
       has_box: /box|case/i.test(includes),
     };
 
+    const markets = selectedMarkets();
+    if (!markets.length) { showToast('Pick eBay and/or Mercari first'); return; }
     const payload = {
+      markets,
+      item_id: currentData.item_id,  // set after a first attempt → a retry never lists twice
       game_info: editedGameInfo,
       photos: currentData.photos || [],
       listing: {
@@ -1852,23 +2064,39 @@
 
     publishBtn.disabled = true;
     publishBtn.textContent = 'Publishing...';
+    const statusEl = document.getElementById('publish-status');
+
+    const show = (listings) => {
+      statusEl.innerHTML = `<div class="market-badges">${badgesHtml(listings)}</div>${notesHtml(listings)}`;
+    };
+    const finish = (listings) => {
+      if (anyFailed(listings)) {
+        publishBtn.textContent = '↻ Retry failed';
+        publishBtn.disabled = false;
+        delete publishBtn.dataset.done;
+      } else {
+        publishBtn.textContent = '✓ Published';
+        publishBtn.dataset.done = '1';
+        publishBtn.disabled = true;
+      }
+    };
 
     try {
       const result = await postJson('/publish', payload);
-      if (result.success) {
-        showToast(`✅ Listed! ID: ${result.listing_id}`);
-        publishBtn.textContent = '✓ Published — view on eBay';
-        publishBtn.disabled = false;
-        publishBtn.onclick = () => window.open(result.url, '_blank');
-      } else {
-        showToast('✗ Publish failed');
-        publishBtn.textContent = '🚀 Publish to eBay';
-        publishBtn.disabled = false;
-        alert(`Publish failed: ${result.error}\n\nTitle:\n${payload.listing.title}\n\nPrice: $${payload.listing.suggested_price}`);
+      if (result.item_id) currentData.item_id = result.item_id;
+      const listings = resultsToListings(result.results);
+      show(listings);
+      finish(listings);
+      if (result.success) showToast(listings.mercari && listings.mercari.status === 'queued'
+        ? '✅ Published — Mercari is being filled in on your Mac' : '✅ Published!');
+      else showToast('✗ Publish failed');
+      if (listings.mercari && listings.mercari.status === 'queued') {
+        checkMercariStatus();
+        pollItems([result.item_id], (it) => { show(it.listings); finish(it.listings); });
       }
     } catch (err) {
       showToast('✗ Error publishing');
-      publishBtn.textContent = '🚀 Publish to eBay';
+      publishBtn.textContent = publishLabel();
       publishBtn.disabled = false;
     }
   });
@@ -1900,8 +2128,9 @@
     statusBar.style.display = 'none';
     analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
     publishBtn.disabled = false;
-    publishBtn.onclick = null;
-    publishBtn.textContent = '🚀 Publish to eBay';
+    delete publishBtn.dataset.done;
+    publishBtn.textContent = publishLabel();
+    document.getElementById('publish-status').innerHTML = '';
     ['s1', 's2', 's3'].forEach(id => setStatus(id, ''));
   }
 
@@ -2109,6 +2338,7 @@
           <span class="batch-card-price">${money(l.suggested_price)}</span>
           <span class="batch-card-expand">▼</span>
         </div>
+        <div class="batch-card-markets"></div>
         <div class="batch-card-details">
           <div class="ai-check">${aiCheckHtml(data)}</div>
           <div class="game-meta">
@@ -2179,8 +2409,10 @@
 
   function updatePublishBatchCount() {
     const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked:not(:disabled)').length;
-    publishBatchBtn.textContent = `Publish Selected (${checked})`;
-    publishBatchBtn.disabled = checked === 0;
+    const markets = selectedMarkets();
+    publishBatchBtn.textContent = markets.length
+      ? `Publish Selected (${checked}) → ${markets.map(m => MARKET_NAMES[m]).join(' + ')}` : 'Pick a marketplace ↑';
+    publishBatchBtn.disabled = checked === 0 || !markets.length;
   }
 
   // ── Batch: Publish Selected ───────────
@@ -2198,6 +2430,7 @@
       const activeCondBtn = details.querySelector('.batch-condition-grid .condition-btn.active');
 
       return {
+        item_id: data.item_id,
         photos: data.photos,
         game_info: {
           ...data.game_info,
@@ -2219,41 +2452,47 @@
       };
     });
 
+    // Show one game's marketplace badges; a card can't be re-published once nothing failed
+    const showCard = (idx, listings) => {
+      const card = batchCardsEl.querySelector(`.batch-card[data-idx="${idx}"]`);
+      if (!card) return;
+      card.querySelector('.batch-card-markets').innerHTML = badgesHtml(listings) + notesHtml(listings);
+      const cb = card.querySelector('.batch-card-checkbox');
+      const failed = anyFailed(listings);
+      card.classList.toggle('published', !failed);
+      card.classList.toggle('publish-failed', failed);
+      cb.disabled = !failed;   // don't publish twice
+      cb.checked = failed;     // failed ones stay selected for a retry
+    };
+
     try {
-      const result = await postJson('/publish-batch', { games });
+      const result = await postJson('/publish-batch', { games, markets: selectedMarkets() });
+      const byItem = {};
       let successCount = 0;
       result.results.forEach((r, ri) => {
-        const cb = checked[ri];
-        const card = cb.closest('.batch-card');
-        const badge = document.createElement(r.success ? 'a' : 'span');
-        if (r.success) {
-          card.classList.add('published');
-          badge.className = 'batch-card-status success';
-          badge.textContent = `Listed #${r.listing_id}`;
-          badge.href = r.url;
-          badge.target = '_blank';
-          cb.checked = false;
-          cb.disabled = true;  // don't publish twice
-          successCount++;
-        } else {
-          card.classList.add('publish-failed');
-          badge.className = 'batch-card-status failed';
-          badge.textContent = 'Failed';
-          badge.title = r.error;
-          const err = document.createElement('div');
-          err.className = 'char-count over';
-          err.textContent = r.error;
-          card.querySelector('.batch-card-details').prepend(err);
+        const idx = parseInt(checked[ri].dataset.idx);
+        if (r.item_id) {
+          batchResults[idx].item_id = r.item_id;
+          byItem[r.item_id] = idx;
         }
-        card.querySelector('.batch-card-summary').appendChild(badge);
+        if (r.success) successCount++;
+        showCard(idx, r.results ? resultsToListings(r.results) : { ebay: { status: 'failed', error: r.error } });
       });
 
       showToast(`Published ${successCount}/${result.results.length} games`);
       updatePublishBatchCount();
+
+      const pending = result.results.filter(r => r.results && r.results.mercari && r.results.mercari.status === 'queued');
+      if (pending.length) {
+        checkMercariStatus();
+        pollItems(pending.map(r => r.item_id), (it) => {
+          showCard(byItem[it.id], it.listings);
+          updatePublishBatchCount();
+        });
+      }
     } catch (err) {
       showToast('Batch publish error');
-      publishBatchBtn.textContent = 'Publish Selected';
-      publishBatchBtn.disabled = false;
+      updatePublishBatchCount();
     }
   });
 
@@ -2269,8 +2508,7 @@
     batchCardsEl.innerHTML = '';
     renderBatchQueue();
     resetSingle();
-    publishBatchBtn.disabled = false;
-    publishBatchBtn.textContent = 'Publish Selected (0)';
+    updatePublishBatchCount();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 </script>

@@ -1,13 +1,14 @@
-# RetroList — eBay Game Lister
+# RetroList — eBay + Mercari Game Lister
 > Claude Code context file. Read this before making any changes.
 
 ## What This Is
-A Flask web app that lets Storm photograph retro video games, identifies and grades them with Claude, prices them at the PriceCharting loose or CIB value, writes an honest eBay listing, and publishes it via the eBay Inventory API. Built to be used from a phone browser while the server runs on a Mac.
+A Flask web app that lets Storm photograph retro video games, identifies and grades them with Claude, prices them at the PriceCharting loose or CIB value, writes an honest eBay listing, and publishes it via the eBay Inventory API — and optionally cross-lists it on Mercari (browser automation), ending the other listing when it sells on either. Built to be used from a phone browser while the server runs on a Mac.
 
 ## Project Structure
 ```
 ebayListingBot/
-├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing
+├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing, sale sync
+├── crosslist.py                     # Inventory DB (SQLite) + Mercari publisher (Playwright worker)
 ├── templates/
 │   ├── index.html                   # Single-page frontend, retro dark theme
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
@@ -19,14 +20,16 @@ ebayListingBot/
 ├── ebay_tokens.json                 # Saved eBay OAuth tokens (gitignored)
 ├── ebay_config.json                 # eBay App ID / Cert ID / RuName from the setup screen (gitignored)
 ├── .flask_secret                    # Session key (gitignored, auto-created)
-└── uploads/                         # Photos, auto-deleted after UPLOAD_RETENTION_DAYS (gitignored)
+├── inventory.db                     # Every published item + its listing on each marketplace (gitignored)
+├── mercari_profile/                 # Browser profile holding the Mercari login (gitignored)
+└── uploads/                         # Photos + mercari_screens/, auto-deleted after UPLOAD_RETENTION_DAYS (gitignored)
 ```
 
 ## Stack
 - **Backend**: Python 3.13, Flask 3.x (runs in `venv/`), Pillow + pillow-heif for photos
 - **AI**: the local **Claude Code CLI** in headless mode (`claude -p`). It runs on Storm's Claude plan login — no API key, no per-call billing. `run_claude()` removes `ANTHROPIC_API_KEY` from the subprocess env so it can never silently bill an API key.
 - **Pricing**: PriceCharting loose/CIB price — local `pricecharting_master_price.csv` snapshot, or the live PriceCharting API when `PRICECHARTING_API_KEY` is set. No web research.
-- **Listing**: eBay Inventory REST API + Trading API `UploadSiteHostedPictures` for images
+- **Listing**: eBay Inventory REST API + Trading API `UploadSiteHostedPictures` for images; Mercari via Playwright (no public API)
 - **Frontend**: Vanilla HTML/CSS/JS, no framework, Space Mono + Syne fonts
 
 ## Environment Variables (in `.env`)
@@ -52,6 +55,15 @@ CLAUDE_MODEL=sonnet                    # or opus for harder IDs (slower, uses mo
 ANALYZE_WORKERS=3                      # games analyzed in parallel
 CLAUDE_TIMEOUT=240
 CLAUDE_BIN=                            # path to `claude` if not on PATH
+
+# Cross-listing (all optional)
+MERCARI_DRY_RUN=true                   # TEST MODE: fill Mercari's form + screenshot, never click List. Set false to go live
+MERCARI_PRICE_MARKUP=0                 # % added to the eBay price on Mercari (e.g. 5)
+MERCARI_BROWSER=chrome                 # "chrome" = installed Google Chrome; empty = Playwright's Chromium
+MERCARI_HEADLESS=false                 # real window is less likely to get bot-checked...
+MERCARI_OFFSCREEN=true                 # ...but it's parked off-screen (login window is always on screen)
+CROSSLIST_SYNC_MINUTES=10              # how often to check both marketplaces for sales (0 = off)
+CROSSLIST_AUTO_END=true                # end the other listing automatically when an item sells
 ```
 `GEMINI_API_KEY` / `CEREBRAS_API_KEY` are no longer used.
 
@@ -75,6 +87,28 @@ Claude CLI safety: `--tools Read` only, and Read is *not* pre-approved so it onl
 
 Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more photos → more). Token usage is logged per game and shown in the AI check panel. Games run 3 at a time.
 
+## Cross-listing (crosslist.py + app.py)
+- **Inventory** (`inventory.db`): `items` (one per physical game, status active/sold) and `listings` (one per item ×
+  marketplace: status queued/listed/draft/failed/sold/ended/end_failed, eBay `sku` + `offer_id`, Mercari item id `m…`).
+  Only games published after this feature exists are tracked.
+- **`publish_item()`**: eBay publishes synchronously as before; Mercari is queued to the Mercari worker and the UI polls
+  `/items/status`. The browser sends back `item_id` on retries, and markets already listed/queued are skipped — so a
+  retry never double-lists.
+- **Mercari worker**: ONE thread owns a Playwright persistent context (`mercari_profile/`) — Playwright's sync API isn't
+  thread-safe, so every Mercari action is a job on its queue. Browser starts on demand, closes after 60 s idle.
+  Log in once via "Log in to Mercari" (opens a window on the Mac for 5 min). All selectors are in `MERCARI_UI`;
+  each is a list of fallbacks. Missing optional steps (brand, category) become warnings stored in `listings.error`
+  and shown under the badge; missing required ones (photos, title, description, price) fail the job with a screenshot.
+- **Mapping** (`to_mercari()`): HTML description → plain text + Platform/Region/Part number/Year lines (Mercari has no
+  item specifics), ≤80-char title, ≤1000-char description, ≤12 photos, conditions NEW→New, LIKE_NEW/EXCELLENT→Like new,
+  VERY_GOOD/GOOD→Good, ACCEPTABLE→Fair, brand from platform (Nintendo/Sony/…), category Electronics › Video Games & Consoles › Video Games.
+  Shipping is left at Mercari's default — check it in a test-mode screenshot.
+- **Sale sync** (`sync_sales()`, every CROSSLIST_SYNC_MINUTES + "Check for sales now"): eBay sales from the Fulfillment
+  API `getOrders` (matched by SKU); Mercari sales by reading item ids off the in-progress/complete pages. A sale →
+  item marked sold → other listings ended (eBay: `POST /offer/{id}/withdraw`; Mercari: item → Edit → Deactivate).
+  If ending fails it's `end_failed` and a red banner in the UI says to end it by hand.
+- Test mode was verified against a local mock of the sell form only — the real Mercari page needs a first dry run.
+
 ## Routes
 | Route | Method | Description |
 |-------|--------|-------------|
@@ -82,8 +116,13 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
 | `/login` | GET/POST | PIN login (rate-limited: 5 tries / 5 min per IP) |
 | `/analyze-batch` | POST | FormData `game_count`, `game_{n}_photos`, `game_{n}_notes`, `tested` → SSE `progress` / `result` / `error` / `done`. Used for single games too (count = 1). |
 | `/group-photos` | POST | Photo dump: `photos` + `modified` (JSON lastModified list) → `{groups: [{item, photos: [{ref, index}]}]}` |
-| `/publish` | POST | JSON `{listing, game_info, photos}` → `{success, listing_id, url}` or `{success: false, error}` |
-| `/publish-batch` | POST | JSON `{games: [...]}` → `{results: [...]}` |
+| `/publish` | POST | JSON `{listing, game_info, photos, markets: ["ebay","mercari"], item_id?}` → `{success, item_id, results: {market: {status, url, error}}, listing_id, url}` |
+| `/publish-batch` | POST | JSON `{games: [{…, item_id?}], markets}` → `{results: [...]}` |
+| `/items/status` | POST | `{ids}` → items with per-market listing status (polled while Mercari works) |
+| `/inventory` | GET | Recent items, listings needing attention, sync state |
+| `/sync/run` | POST | Check for sales now and end other listings |
+| `/mercari/status`, `/mercari/login` | GET/POST | Login state (`?check=1` actually checks) / open the login window on the Mac |
+| `/mercari/screenshot/<id>.png` | GET | Filled-form screenshot (test mode or failure) |
 | `/ebay/auth`, `/ebay/callback` | GET | OAuth consent flow (with `state` check) |
 | `/ebay/config` | GET/POST | Read (secret redacted) / save app credentials; verified with eBay before saving |
 | `/ebay/code` | POST | Finish OAuth by pasting the redirect URL (eBay only redirects to https, the app is local http) |
@@ -132,6 +171,9 @@ Claude Code must be installed and logged in (`claude` once in Terminal). Restart
 Use Tailscale (no port forwarding). The app is not meant for the public internet — set `APP_PIN` anyway.
 
 ## Known TODOs
+- [ ] Mercari selectors verified only against a mock — tune `MERCARI_UI` after the first real test-mode run
+- [ ] Cross-list games that were already on eBay before inventory.db existed (would need their eBay photos)
+- [ ] Poshmark / Etsy / Depop adapters
 - [ ] eBay condition options per category are hard-coded (6 values); could be fetched from the Metadata API
 - [ ] No "save as draft" (unpublished offer) option yet
 - [ ] Price CSV is a static snapshot (Mar 2026) — refresh it, or add a PriceCharting API key for live prices
