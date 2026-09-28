@@ -161,6 +161,9 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 **Known eBay quirks:**
 - Error 25001 / 5xx on inventory is transient — retried once
 - Error 25002 ("Add at least 1 photo") means image upload failed — check token scopes
+- Error 25021 (invalid condition for the category): Video Games only allows New, Like New, Very Good, Good,
+  Acceptable — no "Excellent". An old `USED_EXCELLENT` is published as `USED_VERY_GOOD`
+- Error 25001 at the publish step is also transient — retried once
 - `packageType` causes error 25101 for video games — intentionally omitted, only weight is sent
 - SKUs are `RL-<SLUG>-<8 hex>` (letters, digits, hyphens; ≤50 chars)
 - Aspects with unknown values (`N/A`, `Unknown`) are omitted rather than sent
@@ -202,7 +205,7 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 ## Known TODOs
 - [ ] Mercari selectors verified only against a mock — tune `MERCARI_UI` after the first real test-mode run
 - [ ] Poshmark / Etsy / Depop adapters
-- [ ] eBay condition options per category are hard-coded (6 values); could be fetched from the Metadata API
+- [ ] eBay condition options are hard-coded (5 values, checked against the Metadata API Sep 2026 for Video Games); could be fetched per category
 - [ ] No "save as draft" (unpublished offer) option yet
 - [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
 - [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate

@@ -108,7 +108,10 @@ EBAY_SCOPES = [
 EBAY_TOKEN_FILE = BASE_DIR / "ebay_tokens.json"
 EBAY_TOKEN_LEGACY = os.environ.get("EBAY_TOKEN", "")  # static token fallback
 
-CONDITIONS = ["NEW", "LIKE_NEW", "USED_EXCELLENT", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE"]
+# The conditions eBay allows in Video Games (139973) — checked with the Metadata API
+# (get_item_condition_policies): 1000 New, 2750 Like New, 4000 Very Good, 5000 Good, 6000 Acceptable.
+# USED_EXCELLENT (3000) is NOT allowed there and fails publishing with error 25021.
+CONDITIONS = ["NEW", "LIKE_NEW", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE"]
 
 
 def _load_secret_key() -> str:
@@ -876,6 +879,8 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     token = get_ebay_token()
     if not token:
         return {"success": False, "error": "No eBay token configured. Connect eBay from the app."}
+    if listing.get("condition") == "USED_EXCELLENT":  # older results/pages offered it; eBay rejects it here
+        listing = {**listing, "condition": "USED_VERY_GOOD"}
     if listing.get("condition") not in CONDITIONS:
         return {"success": False, "error": f"Invalid condition {listing.get('condition')!r}"}
     try:
@@ -951,9 +956,15 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
         return {"success": False, "error": _ebay_error("Offer error", offer_resp), "sku": sku}
     offer_id = offer_resp.json().get("offerId")
 
-    # 3. Publish
-    pub_resp = requests.post(f"{EBAY_BASE_URL}/sell/inventory/v1/offer/{offer_id}/publish",
-                             headers=headers, timeout=30)
+    # 3. Publish — 25001 / 5xx here are eBay's own glitches too, so retry once
+    for attempt in range(2):
+        pub_resp = requests.post(f"{EBAY_BASE_URL}/sell/inventory/v1/offer/{offer_id}/publish",
+                                 headers=headers, timeout=30)
+        if attempt == 0 and (pub_resp.status_code >= 500 or "25001" in pub_resp.text):
+            print(f"[publish] Publish call failed ({pub_resp.status_code}), retrying...")
+            time.sleep(3)
+            continue
+        break
     if pub_resp.status_code in (200, 201):
         listing_id = pub_resp.json().get("listingId")
         print(f"[publish] Listed {sku} → {listing_id}")
