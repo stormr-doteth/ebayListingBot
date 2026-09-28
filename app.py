@@ -153,21 +153,25 @@ def require_pin(f):
 
 # Common platform names → CSV "Console" values
 PLATFORM_TO_CSV = {
-    "nintendo 64": "N64", "n64": "N64",
-    "super nintendo": "SNES", "super nes": "SNES", "snes": "SNES", "super nintendo entertainment system": "SNES",
+    "nintendo 64": "Nintendo 64", "n64": "Nintendo 64",
+    "super nintendo": "Super Nintendo", "super nes": "Super Nintendo", "snes": "Super Nintendo",
+    "super nintendo entertainment system": "Super Nintendo",
     "nintendo entertainment system": "NES", "nes": "NES", "nintendo nes": "NES",
     "game boy": "GameBoy", "gameboy": "GameBoy", "nintendo game boy": "GameBoy",
     "game boy color": "GameBoy Color", "gameboy color": "GameBoy Color",
     "game boy advance": "GameBoy Advance", "gameboy advance": "GameBoy Advance", "gba": "GameBoy Advance",
     "gamecube": "GameCube", "nintendo gamecube": "GameCube",
     "nintendo ds": "Nintendo DS", "ds": "Nintendo DS",
+    "nintendo 3ds": "Nintendo 3DS", "3ds": "Nintendo 3DS",
     "wii": "Wii", "nintendo wii": "Wii",
-    "playstation": "PlayStation", "ps1": "PlayStation", "psx": "PlayStation", "playstation 1": "PlayStation",
-    "sony playstation": "PlayStation",
-    "playstation 2": "PlayStation 2", "ps2": "PlayStation 2", "sony playstation 2": "PlayStation 2",
-    "playstation 3": "PlayStation 3", "ps3": "PlayStation 3", "sony playstation 3": "PlayStation 3",
+    "playstation": "Playstation", "ps1": "Playstation", "psx": "Playstation", "playstation 1": "Playstation",
+    "sony playstation": "Playstation",
+    "playstation 2": "Playstation 2", "ps2": "Playstation 2", "sony playstation 2": "Playstation 2",
+    "playstation 3": "Playstation 3", "ps3": "Playstation 3", "sony playstation 3": "Playstation 3",
+    "playstation 4": "Playstation 4", "ps4": "Playstation 4", "sony playstation 4": "Playstation 4",
     "xbox": "Xbox", "microsoft xbox": "Xbox", "original xbox": "Xbox",
     "xbox 360": "Xbox 360", "microsoft xbox 360": "Xbox 360",
+    "xbox one": "Xbox One", "microsoft xbox one": "Xbox One",
 }
 
 
@@ -184,7 +188,8 @@ def _parse_money(value: str) -> float:
 
 
 def _load_price_guide() -> dict[str, list[dict]]:
-    """Load the CSV into {console: [{title, norm, loose, cib}]}."""
+    """Load the CSV (from the PriceCharting scraper) into {console: [{title, norm, loose, cib, url}]}.
+    Rows with no loose or CIB price are skipped — matching one would price the game at $0.99."""
     csv_path = BASE_DIR / "pricecharting_master_price.csv"
     guide: dict[str, list[dict]] = {}
     if not csv_path.exists():
@@ -193,10 +198,11 @@ def _load_price_guide() -> dict[str, list[dict]]:
     with open(csv_path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             console, title = row.get("Console", "").strip(), row.get("Title", "").strip()
-            if console and title:
+            loose, cib = _parse_money(row.get("Loose Price")), _parse_money(row.get("CIB Price"))
+            if console and title and (loose or cib):
                 guide.setdefault(console, []).append({
-                    "title": title, "norm": _normalize_title(title),
-                    "loose": _parse_money(row.get("Loose Price")), "cib": _parse_money(row.get("CIB Price")),
+                    "title": title, "norm": _normalize_title(title), "loose": loose, "cib": cib,
+                    "url": (row.get("URL") or "").strip(),  # the game's own PriceCharting page
                 })
     print(f"[prices] Loaded {sum(len(v) for v in guide.values())} prices across {len(guide)} consoles")
     return guide
@@ -228,7 +234,7 @@ def price_guide_matches(game_title: str, platform: str, limit: int = 6) -> list[
     scored.sort(key=lambda s: s[0], reverse=True)
     return [{"title": e["title"], "console": console, "loose": e["loose"], "cib": e["cib"],
              "match": round(s, 2), "source": "PriceCharting CSV",
-             "url": pricecharting_link(e["title"], console)} for s, e in scored[:limit]]
+             "url": e["url"] or pricecharting_link(e["title"], console)} for s, e in scored[:limit]]
 
 
 def pricecharting_link(title: str, console: str) -> str:
@@ -1331,8 +1337,9 @@ def _sse(event: dict) -> str:
 def group_photos_route():
     """Photo dump → sorted by capture time → split into one group per game.
 
-    Form: photos (files), modified (JSON list of each file's lastModified ms, a fallback when a
-    photo has no EXIF time). Returns {groups: [{item, photos: [{ref, index}]}]} where `index`
+    Form: photos (files), taken (JSON list of each photo's EXIF capture time read by the browser —
+    photos it shrank before upload have lost their EXIF), modified (JSON list of each file's
+    lastModified ms, a fallback when a photo has no capture time at all). Returns {groups: [{item, photos: [{ref, index}]}]} where `index`
     is the file's position in the upload, so the browser can show its own thumbnails."""
     files = request.files.getlist("photos")
     if not 2 <= len(files) <= DUMP_MAX_PHOTOS:
@@ -1341,6 +1348,10 @@ def group_photos_route():
         modified = [float(m) for m in json.loads(request.form.get("modified", "[]"))]
     except (ValueError, TypeError):
         modified = []
+    try:
+        client_taken = [str(t or "") for t in json.loads(request.form.get("taken", "[]"))]
+    except (ValueError, TypeError):
+        client_taken = []
 
     dump_dir = UPLOAD_DIR / uuid.uuid4().hex / "dump"
     taken: list = []
@@ -1348,9 +1359,11 @@ def group_photos_route():
     if len(refs) < 2:
         return jsonify({"error": "Need at least 2 readable photos"}), 400
 
-    # Order by EXIF capture time; fall back to the file's modified time, then upload order
+    # Order by EXIF capture time (ours, else the browser's); fall back to the file's modified time,
+    # then upload order
     def sort_key(k: int):
         captured, index = taken[k]
+        captured = captured or (client_taken[index] if index < len(client_taken) else "")
         fallback = modified[index] if index < len(modified) else 0
         return (captured or time.strftime("%Y:%m:%d %H:%M:%S", time.localtime(fallback / 1000)), index)
     order = sorted(range(len(refs)), key=sort_key)

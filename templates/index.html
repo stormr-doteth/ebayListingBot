@@ -4,20 +4,56 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RetroList — eBay Game Lister</title>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
+    /* ── Tokens: light by default, dark follows the phone/Mac setting ── */
     :root {
-      --bg: #0a0a0f;
-      --surface: #13131a;
-      --surface2: #1c1c28;
-      --border: #2a2a3d;
-      --accent: #ff6b2b;
-      --accent2: #ffcc00;
-      --green: #39ff14;
-      --text: #e8e8f0;
-      --muted: #6b6b8a;
-      --font-mono: 'Space Mono', monospace;
-      --font-display: 'Syne', sans-serif;
+      color-scheme: light dark;
+      --bg: #f5f5f3;
+      --surface: #ffffff;
+      --surface2: #f0f0ed;
+      --border: #e5e5e1;
+      --border-strong: #d4d4cf;
+      --text: #18181b;
+      --muted: #6b6b73;
+      --accent: #e8590c;
+      --accent-hover: #cf4d07;
+      --accent-soft: rgba(232, 89, 12, 0.10);
+      --on-accent: #ffffff;
+      --green: #15803d;
+      --green-soft: rgba(21, 128, 61, 0.10);
+      --warn: #b45309;
+      --warn-soft: rgba(217, 119, 6, 0.12);
+      --red: #dc2626;
+      --red-soft: rgba(220, 38, 38, 0.10);
+      --accent2: var(--warn);            /* old name, still used by a few inline styles */
+      --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+      --radius: 14px;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+      --font-display: var(--font);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f0f11;
+        --surface: #18181b;
+        --surface2: #222226;
+        --border: #2a2a2f;
+        --border-strong: #3a3a41;
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --accent: #fb7a35;
+        --accent-hover: #ff8c4d;
+        --accent-soft: rgba(251, 122, 53, 0.14);
+        --on-accent: #1a0c03;
+        --green: #4ade80;
+        --green-soft: rgba(74, 222, 128, 0.12);
+        --warn: #fbbf24;
+        --warn-soft: rgba(251, 191, 36, 0.12);
+        --red: #f87171;
+        --red-soft: rgba(248, 113, 113, 0.12);
+        --shadow: 0 1px 2px rgba(0,0,0,0.3);
+      }
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -25,1132 +61,511 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--font-mono);
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1.5;
       min-height: 100vh;
       overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
     }
 
-    /* Scanline overlay */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0,0,0,0.08) 2px,
-        rgba(0,0,0,0.08) 4px
-      );
-      pointer-events: none;
-      z-index: 100;
-    }
-
-    /* Grid background */
-    body::after {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(255,107,43,0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,107,43,0.04) 1px, transparent 1px);
-      background-size: 48px 48px;
-      pointer-events: none;
-      z-index: 0;
-    }
+    a { color: var(--accent); }
+    button, input, textarea, select { font-family: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     .container {
-      max-width: 900px;
+      max-width: 760px;
       margin: 0 auto;
-      padding: 0 24px 80px;
-      position: relative;
-      z-index: 1;
+      padding: 0 16px 96px;
     }
 
-    /* Header */
-    header {
-      padding: 48px 0 40px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 48px;
+    /* ── Header ── */
+    header { padding: 24px 0 20px; }
+
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo {
+      width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
+      background: var(--accent); color: var(--on-accent);
+      display: grid; place-items: center;
+    }
+    .logo svg { width: 24px; height: 24px; }
+    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+    h1 span { color: var(--accent); }
+    .header-sub { color: var(--muted); font-size: 13px; }
+    .env-badge {
+      margin-left: auto; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+      background: var(--warn-soft); color: var(--warn);
     }
 
-    .header-tag {
-      font-size: 11px;
-      letter-spacing: 0.3em;
-      color: var(--accent);
-      text-transform: uppercase;
-      margin-bottom: 12px;
-    }
+    .conn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
 
-    h1 {
-      font-family: var(--font-display);
-      font-size: clamp(36px, 6vw, 64px);
-      font-weight: 800;
-      line-height: 1;
-      letter-spacing: -0.02em;
+    /* Status chips (eBay / Mercari connection) */
+    .ebay-status {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 36px; padding: 0 14px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border);
+      font-size: 13px; font-weight: 500; cursor: pointer;
     }
+    .ebay-status-text { color: var(--text); }
+    .ebay-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .ebay-dot.connected { background: var(--green); }
+    .ebay-dot.legacy { background: var(--warn); }
+    .ebay-dot.disconnected { background: var(--red); }
 
-    h1 span {
-      color: var(--accent);
-      position: relative;
+    /* Small buttons: one style everywhere */
+    .btn-small, .btn-link-small {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      height: 36px; padding: 0 14px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border-strong); color: var(--text);
+      font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
     }
+    .btn-small:hover, .btn-link-small:hover { background: var(--surface2); }
+    .btn-small.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+    .btn-small.primary:hover { background: var(--accent-hover); }
+    .btn-small:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-link-small { min-width: 36px; padding: 0 12px; }   /* ⚙ — just the icon once eBay is set up */
+    .push-right { margin-left: auto; }
 
-    .header-sub {
-      margin-top: 16px;
-      color: var(--muted);
-      font-size: 13px;
+    .ebay-banner {
+      display: none; margin-top: 12px; padding: 10px 14px; border-radius: 12px;
+      background: var(--warn-soft); color: var(--warn); font-size: 13px; font-weight: 500;
     }
+    .ebay-banner a { color: inherit; }
 
-    /* Upload zone */
-    .upload-section {
-      margin-bottom: 40px;
+    /* ── Sections ── */
+    .upload-section, .listing-section, .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
     }
+    .upload-section { padding: 18px; }
 
     .section-label {
-      font-size: 11px;
-      letter-spacing: 0.25em;
-      color: var(--accent);
-      text-transform: uppercase;
-      margin-bottom: 16px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 17px; font-weight: 650; letter-spacing: -0.01em;
+      margin-bottom: 14px;
+    }
+    .step {
+      width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+      display: grid; place-items: center;
+      background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700;
     }
 
+    .divider { border: none; margin: 28px 0 0; }
+
+    /* ── Upload ── */
     .drop-zone {
-      border: 2px dashed var(--border);
-      border-radius: 4px;
-      padding: 60px 24px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-      position: relative;
-      background: var(--surface);
+      position: relative; cursor: pointer; text-align: center;
+      padding: 32px 20px; border-radius: 12px;
+      border: 1.5px dashed var(--border-strong); background: var(--surface2);
+      transition: border-color 0.15s, background 0.15s;
     }
-
-    .drop-zone:hover, .drop-zone.drag-over {
-      border-color: var(--accent);
-      background: rgba(255,107,43,0.05);
-    }
-
-    .drop-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
-    }
-
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-soft); }
+    .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
     .drop-icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-      display: block;
+      width: 52px; height: 52px; margin: 0 auto 12px; border-radius: 50%;
+      display: grid; place-items: center; background: var(--accent-soft); color: var(--accent);
     }
+    .drop-icon svg { width: 26px; height: 26px; }
+    .drop-text { font-size: 13px; color: var(--muted); max-width: 340px; margin: 0 auto; }
+    .drop-text strong { display: block; color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 4px; }
 
-    .drop-text {
-      font-size: 14px;
-      color: var(--muted);
-    }
-
-    .drop-text strong {
-      color: var(--text);
-      display: block;
-      margin-bottom: 6px;
-      font-size: 16px;
-    }
-
-    /* Thumbnail strip */
-    #thumb-strip {
-      display: none;
-      margin-top: 20px;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-
+    #thumb-strip { display: none; gap: 8px; flex-wrap: wrap; }
     #thumb-strip.has-items { display: flex; }
-
     .thumb-item {
-      position: relative;
-      width: 100px;
-      height: 100px;
-      border-radius: 4px;
-      border: 2px solid var(--border);
-      overflow: hidden;
-      flex-shrink: 0;
+      position: relative; width: 84px; height: 84px; flex-shrink: 0;
+      border-radius: 10px; overflow: hidden; border: 1px solid var(--border-strong); background: var(--surface2);
     }
-
-    .thumb-item.primary { border-color: var(--accent); }
-
-    .thumb-item img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
+    .thumb-item.primary { border: 2px solid var(--accent); }
+    .thumb-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .thumb-remove {
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      background: rgba(0,0,0,0.8);
-      border: 1px solid var(--border);
-      color: var(--text);
-      width: 22px;
-      height: 22px;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
+      position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(0,0,0,0.6); border: none; color: #fff; font-size: 11px; cursor: pointer;
+      display: grid; place-items: center; line-height: 1;
     }
-
     .thumb-badge {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      background: var(--accent);
-      color: #000;
-      font-size: 9px;
-      font-weight: 700;
-      text-align: center;
-      padding: 2px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
+      position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+      background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 600;
     }
 
-    /* Notes */
-    .notes-wrap {
-      margin-top: 20px;
-    }
+    .notes-wrap { margin-top: 14px; }
 
-    textarea {
+    textarea, .field-input {
       width: 100%;
       background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
       color: var(--text);
-      font-family: var(--font-mono);
-      font-size: 13px;
-      padding: 14px 16px;
-      resize: vertical;
-      min-height: 80px;
-      transition: border-color 0.2s;
+      font-size: 16px;             /* 16px stops iOS from zooming in on focus */
+      line-height: 1.45;
+      padding: 11px 13px;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-
-    textarea:focus {
-      outline: none;
-      border-color: var(--accent);
+    textarea { resize: vertical; min-height: 76px; }
+    textarea:focus, .field-input:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
     }
+    textarea::placeholder, .field-input::placeholder, .meta-input::placeholder { color: var(--muted); opacity: 0.8; }
 
-    textarea::placeholder { color: var(--muted); }
-
-    /* Analyze button */
-    .btn-analyze {
-      width: 100%;
-      margin-top: 20px;
-      padding: 18px;
-      background: var(--accent);
-      color: #000;
-      border: none;
-      border-radius: 4px;
-      font-family: var(--font-display);
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      transition: all 0.15s;
-      text-transform: uppercase;
-      position: relative;
-      overflow: hidden;
+    /* Option chips (Tested, List on eBay/Mercari) */
+    .options-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; }
+    .options-row label {
+      display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+      height: 38px; padding: 0 14px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border-strong); font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
     }
+    .options-row label:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+    .options-row input { accent-color: var(--accent); width: 16px; height: 16px; }
+    .options-row .markets-label { color: var(--muted); font-size: 13px; margin-right: 2px; }
 
-    .btn-analyze:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(255,107,43,0.4);
+    /* ── Buttons ── */
+    .btn-analyze, .btn-publish, .btn-analyze-batch, .btn-publish-batch {
+      width: 100%; min-height: 52px; padding: 14px 18px;
+      background: var(--accent); color: var(--on-accent);
+      border: none; border-radius: 12px;
+      font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
     }
-
-    .btn-analyze:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+    .btn-analyze:hover:not(:disabled), .btn-publish:hover:not(:disabled),
+    .btn-analyze-batch:hover:not(:disabled), .btn-publish-batch:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-analyze:active:not(:disabled), .btn-publish:active:not(:disabled),
+    .btn-analyze-batch:active:not(:disabled), .btn-publish-batch:active:not(:disabled) { transform: scale(0.99); }
+    .btn-analyze:disabled, .btn-publish:disabled, .btn-analyze-batch:disabled, .btn-publish-batch:disabled {
+      opacity: 0.4; cursor: not-allowed;
     }
+    .btn-analyze { margin-top: 16px; }
+    .btn-analyze-batch { margin-top: 12px; }
 
-    /* Status bar */
-    #status-bar {
-      display: none;
-      margin-top: 24px;
-      padding: 14px 16px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      font-size: 13px;
+    .btn-sort-dump, .btn-add-batch, .btn-preview {
+      width: 100%; min-height: 46px; padding: 10px 14px;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: 12px;
+      font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: background 0.15s;
     }
+    .btn-sort-dump:hover:not(:disabled), .btn-add-batch:hover:not(:disabled), .btn-preview:hover { background: var(--surface2); }
+    .btn-sort-dump:disabled, .btn-add-batch:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 
-    .status-line {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--muted);
-    }
-
-    .status-line.active { color: var(--accent2); }
-    .status-line.done { color: var(--green); }
-    .status-line.error { color: #ff4444; }
-
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: currentColor;
-      flex-shrink: 0;
-    }
-
-    .dot.pulse {
-      animation: pulse 1s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.7); }
-    }
-
-    /* Results */
-    #results {
-      display: none;
-      animation: fadeUp 0.4s ease;
-    }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .divider {
-      border: none;
-      border-top: 1px solid var(--border);
-      margin: 40px 0;
-    }
-
-    /* Game card */
-    .game-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 24px;
-      margin-bottom: 24px;
-    }
-
-    .game-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 16px;
-    }
-
-    .game-title {
-      font-family: var(--font-display);
-      font-size: 22px;
-      font-weight: 800;
-    }
-
-    .game-platform {
-      background: var(--accent2);
-      color: #000;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 2px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      flex-shrink: 0;
-    }
-
-    .game-meta {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 12px;
-    }
-
-    .meta-item {
-      font-size: 12px;
-    }
-
-    .meta-label {
-      color: var(--muted);
-      margin-bottom: 2px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    .meta-value { color: var(--text); }
-
-    .meta-input {
-      width: 100%;
-      background: transparent;
-      border: 1px solid transparent;
-      border-bottom: 1px solid var(--border);
-      border-radius: 0;
-      color: var(--text);
-      font-family: var(--font-mono);
-      font-size: 12px;
-      padding: 4px 0;
-      transition: border-color 0.2s;
-    }
-
-    .meta-input:focus {
-      outline: none;
-      border-bottom-color: var(--accent);
-    }
-
-    .meta-input::placeholder { color: var(--muted); }
-
-    .game-title-input {
-      font-family: var(--font-display);
-      font-size: 22px;
-      font-weight: 800;
-      background: transparent;
-      border: 1px solid transparent;
-      border-bottom: 1px solid var(--border);
-      border-radius: 0;
-      color: var(--text);
-      padding: 4px 0;
-      flex: 1;
-      min-width: 0;
-      resize: none;
-      line-height: 1.3;
-      min-height: 50px;
-    }
-
-    .game-title-input:focus { outline: none; border-bottom-color: var(--accent); }
-
-    .platform-input {
-      background: var(--accent2);
-      color: #000;
-      font-size: 11px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      padding: 4px 10px;
-      border-radius: 2px;
-      border: none;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      flex-shrink: 0;
-      width: 140px;
-      text-align: center;
-    }
-
-    .platform-input:focus { outline: 2px solid var(--accent); }
-
-    /* Both header fields also carry .field-input (declared later), so pin their layout here */
-    .game-card-header { gap: 12px; }
-    .game-card-header .game-title-input.field-input {
-      flex: 1; width: auto; min-width: 0;
-      background: transparent; border: 1px solid transparent; border-bottom: 1px solid var(--border);
-      border-radius: 0; font-family: var(--font-display); font-size: 22px; padding: 4px 0;
-    }
-    .game-card-header .platform-input.field-input {
-      flex: 0 0 140px; width: 140px;
-      background: var(--accent2); color: #000; border: none; font-size: 11px; padding: 6px 10px;
-    }
-    @media (max-width: 480px) {
-      .game-card-header { flex-direction: column; }
-      .game-card-header .platform-input.field-input { flex-basis: auto; }
-    }
-
-    /* Price row */
-    .price-row {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 24px;
-      flex-wrap: wrap;
-    }
-
-    .price-box {
-      flex: 1;
-      min-width: 120px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 16px;
-      text-align: center;
-    }
-
-    .price-box.suggested {
-      border-color: var(--accent);
-      background: rgba(255,107,43,0.08);
-    }
-
-    .price-label {
-      font-size: 10px;
-      letter-spacing: 0.2em;
-      color: var(--muted);
-      text-transform: uppercase;
-      margin-bottom: 6px;
-    }
-
-    .price-value {
-      font-family: var(--font-display);
-      font-size: 24px;
-      font-weight: 800;
-      color: var(--text);
-    }
-
-    .price-box.suggested .price-value { color: var(--accent); }
-
-    /* Editable listing fields */
-    .listing-section {
-      margin-bottom: 24px;
-    }
-
-    .field-group {
-      margin-bottom: 16px;
-    }
-
-    .field-label {
-      font-size: 11px;
-      letter-spacing: 0.2em;
-      color: var(--accent);
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-
-    .field-input {
-      width: 100%;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text);
-      font-family: var(--font-mono);
-      font-size: 13px;
-      padding: 12px 14px;
-      transition: border-color 0.2s;
-    }
-
-    .field-input:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-
-    .char-count {
-      text-align: right;
-      font-size: 11px;
-      color: var(--muted);
-      margin-top: 4px;
-    }
-
-    .char-count.over { color: #ff4444; }
-
-    /* Condition selector */
-    .condition-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-
-    @media (min-width: 600px) {
-      .condition-grid { grid-template-columns: repeat(6, 1fr); }
-    }
-
-    .condition-btn {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--muted);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      padding: 10px 6px;
-      cursor: pointer;
-      text-align: center;
-      transition: all 0.15s;
-    }
-
-    .condition-btn:hover, .condition-btn.active {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: rgba(255,107,43,0.08);
-    }
-
-    /* Price input */
-    .price-input-wrap {
-      position: relative;
-    }
-
-    .price-input-wrap span {
-      position: absolute;
-      left: 14px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--muted);
-    }
-
-    .price-input-wrap input {
-      padding-left: 28px;
-    }
-
-    /* Publish button */
-    .btn-publish {
-      width: 100%;
-      padding: 18px;
-      background: var(--green);
-      color: #000;
-      border: none;
-      border-radius: 4px;
-      font-family: var(--font-display);
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      transition: all 0.15s;
-      text-transform: uppercase;
-    }
-
-    .btn-publish:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
-    }
-
-    .btn-publish:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-preview {
-      width: 100%;
-      padding: 14px;
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      cursor: pointer;
-      transition: all 0.15s;
-      margin-bottom: 12px;
-    }
-
-    .btn-preview:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    /* Success toast */
-    #toast {
-      display: none;
-      position: fixed;
-      bottom: 32px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--green);
-      color: #000;
-      padding: 16px 28px;
-      border-radius: 4px;
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 15px;
-      z-index: 200;
-      animation: slideUp 0.3s ease;
-    }
-
-    @keyframes slideUp {
-      from { transform: translateX(-50%) translateY(20px); opacity: 0; }
-      to { transform: translateX(-50%) translateY(0); opacity: 1; }
-    }
-
-    /* Description preview modal */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.85);
-      z-index: 150;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-    }
-
-    .modal-overlay.open { display: flex; }
-
-    .modal {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 28px;
-      max-width: 600px;
-      width: 100%;
-      max-height: 80vh;
-      overflow-y: auto;
-    }
-
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-
-    .modal-close {
-      background: none;
-      border: none;
-      color: var(--muted);
-      cursor: pointer;
-      font-size: 20px;
-    }
-
-    .setup-steps { font-size: 0.75rem; line-height: 1.6; color: var(--muted); margin: 0 0 18px 18px; }
-    .setup-steps li { margin-bottom: 8px; }
-    .setup-steps b, .setup-steps code { color: var(--text); }
-    .setup-steps a { color: var(--accent); }
-    .setup-error { color: #ff4444; font-size: 0.75rem; margin-bottom: 12px; min-height: 1em; }
-    .ebay-banner {
-      margin-top: 10px; padding: 8px 12px; border: 1px solid rgba(255,204,0,0.4); border-radius: 4px;
-      color: var(--accent2); font-size: 0.75rem; display: none;
-    }
-    .ebay-banner a { color: var(--accent2); }
-    .btn-link-small {
-      font-family: var(--font-mono); font-size: 11px; padding: 6px 10px; border-radius: 4px;
-      border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer;
-    }
-
-    .description-preview {
-      font-family: sans-serif;
-      font-size: 14px;
-      line-height: 1.7;
-      color: var(--text);
-    }
-
-    /* Reset link */
     .reset-link {
-      display: inline-block;
-      margin-top: 20px;
-      color: var(--muted);
-      font-size: 12px;
-      cursor: pointer;
-      text-decoration: underline;
+      display: inline-block; margin-top: 18px; color: var(--muted); font-size: 14px; font-weight: 500; cursor: pointer;
     }
+    .reset-link:hover { color: var(--text); }
 
-    .reset-link:hover { color: var(--accent); }
+    /* ── Progress ── */
+    #status-bar { display: none; margin-top: 14px; padding: 12px 14px; font-size: 14px; background: var(--surface2); border-radius: 12px; }
+    .status-line { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 3px 0; }
+    .status-line.active { color: var(--text); font-weight: 500; }
+    .status-line.active .dot { background: var(--warn); }
+    .status-line.done .dot { background: var(--green); }
+    .status-line.error { color: var(--red); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); flex-shrink: 0; }
+    .dot.pulse { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.7); } }
 
-    /* ── Batch queue ─────────────────────── */
-    .btn-add-batch {
-      width: 100%;
-      margin-top: 10px;
-      padding: 14px;
-      background: transparent;
-      color: var(--muted);
-      border: 1px dashed var(--border);
-      border-radius: 4px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      cursor: pointer;
-      transition: all 0.15s;
+    #batch-progress { display: none; margin-top: 16px; }
+    .batch-progress-row {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+      padding: 11px 14px; border-radius: 12px; background: var(--surface2);
+      font-size: 14px; color: var(--muted);
     }
+    .batch-progress-row.active { color: var(--text); }
+    .batch-progress-row.active .dot { background: var(--warn); }
+    .batch-progress-row.done { color: var(--text); }
+    .batch-progress-row.done .dot { background: var(--green); }
+    .batch-progress-row.error { color: var(--red); background: var(--red-soft); }
+    .batch-progress-row.error .dot { background: var(--red); }
+    .batch-progress-step { margin-left: auto; font-size: 13px; color: var(--muted); }
 
-    .btn-add-batch:hover:not(:disabled) {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    .btn-add-batch:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    #batch-queue {
-      display: none;
-      margin-top: 20px;
-    }
-
+    /* ── Batch queue (before analyzing) ── */
+    #batch-queue { display: none; margin-top: 18px; }
     #batch-queue.has-items { display: block; }
-
-    .queue-header {
-      font-size: 11px;
-      letter-spacing: 0.25em;
-      color: var(--green);
-      text-transform: uppercase;
-      margin-bottom: 12px;
-    }
-
+    .queue-header { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .queue-hint { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
     .queue-list { display: flex; flex-direction: column; gap: 8px; }
-
     .queue-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 10px 14px;
+      display: flex; align-items: flex-start; gap: 12px; padding: 12px;
+      background: var(--surface2); border-radius: 12px;
     }
-
-    .queue-item-thumb {
-      width: 48px;
-      height: 48px;
-      border-radius: 3px;
-      object-fit: cover;
-      border: 1px solid var(--border);
-    }
-
-    .queue-item-info {
-      flex: 1;
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .queue-item-info strong {
-      color: var(--text);
-      display: block;
-      margin-bottom: 2px;
-      font-size: 13px;
-    }
-
-    .queue-item-remove {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      width: 28px;
-      height: 28px;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .queue-item-remove:hover { border-color: #ff4444; color: #ff4444; }
-
-    /* Photo-dump groups: thumbnails with split / merge controls */
-    .queue-item { align-items: flex-start; }
-    .queue-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .queue-item-thumb { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; }
+    .queue-item-info { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); }
+    .queue-item-info strong { display: block; color: var(--text); font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .queue-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .queue-thumb { position: relative; }
-    .queue-thumb img { width: 52px; height: 52px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); display: block; }
+    .queue-thumb img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; display: block; }
     .queue-split {
-      position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
-      width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border);
-      background: var(--surface2); color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; line-height: 1;
+      position: absolute; left: -9px; top: 50%; transform: translateY(-50%);
+      width: 20px; height: 20px; border-radius: 50%; padding: 0; line-height: 1;
+      background: var(--surface); border: 1px solid var(--border-strong); color: var(--muted);
+      font-size: 11px; cursor: pointer;
     }
     .queue-split:hover { color: var(--accent); border-color: var(--accent); }
     .queue-actions { display: flex; flex-direction: column; gap: 6px; }
-    .queue-hint { font-size: 11px; color: var(--muted); margin: -4px 0 10px; }
-    .btn-sort-dump {
-      width: 100%; margin-top: 10px; padding: 14px; background: transparent; color: var(--accent2);
-      border: 1px solid rgba(255,204,0,0.5); border-radius: 4px; font-family: var(--font-mono);
+    .queue-item-remove {
+      width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+      background: var(--surface); border: 1px solid var(--border-strong); color: var(--muted);
       font-size: 13px; cursor: pointer;
     }
-    .btn-sort-dump:disabled { opacity: 0.4; cursor: not-allowed; }
+    .queue-item-remove:hover { color: var(--red); border-color: var(--red); }
+    .queue-item-remove.queue-merge:hover { color: var(--accent); border-color: var(--accent); }
 
-    .btn-analyze-batch {
-      width: 100%;
-      margin-top: 16px;
-      padding: 18px;
-      background: var(--green);
-      color: #000;
-      border: none;
-      border-radius: 4px;
-      font-family: var(--font-display);
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      transition: all 0.15s;
-      text-transform: uppercase;
-    }
+    /* ── Results (single game) ── */
+    #results, #batch-results { display: none; animation: fadeUp 0.3s ease; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
-    .btn-analyze-batch:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
-    }
-
-    .btn-analyze-batch:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    /* ── Batch progress ──────────────────── */
-    #batch-progress {
-      display: none;
-      margin-top: 24px;
-    }
-
-    .batch-progress-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 14px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      margin-bottom: 6px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .batch-progress-row.active { border-color: var(--accent2); color: var(--accent2); }
-    .batch-progress-row.done { border-color: var(--green); color: var(--green); }
-    .batch-progress-row.error { border-color: #ff4444; color: #ff4444; }
-
-    .batch-progress-row .dot { flex-shrink: 0; }
-
-    .batch-progress-step {
-      font-size: 11px;
-      color: var(--muted);
-      margin-left: auto;
-    }
-
-    /* ── Batch results ───────────────────── */
-    #batch-results { display: none; }
-
-    .batch-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      margin-bottom: 12px;
-      overflow: hidden;
-      transition: border-color 0.2s;
-    }
-
-    .batch-card.published { border-color: var(--green); }
-    .batch-card.publish-failed { border-color: #ff4444; }
-
-    .batch-card-summary {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 14px 16px;
-      cursor: pointer;
-      user-select: none;
-    }
-
-    .batch-card-summary:hover { background: rgba(255,255,255,0.02); }
-
-    .batch-card-checkbox {
-      width: 20px;
-      height: 20px;
-      accent-color: var(--green);
-      flex-shrink: 0;
-      cursor: pointer;
-    }
-
-    .batch-card-thumb {
-      width: 48px;
-      height: 48px;
-      border-radius: 3px;
-      object-fit: cover;
-      border: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    .batch-card-title {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .batch-card-title strong {
-      display: block;
-      font-family: var(--font-display);
-      font-size: 15px;
-      font-weight: 700;
-      word-break: break-word;
-    }
-
-    .batch-card-title small {
-      color: var(--muted);
-      font-size: 11px;
-    }
-
-    .batch-card-price {
-      font-family: var(--font-display);
-      font-weight: 800;
-      font-size: 18px;
-      color: var(--accent);
-      flex-shrink: 0;
-    }
-
-    .batch-card-expand {
-      color: var(--muted);
-      font-size: 16px;
-      flex-shrink: 0;
-      transition: transform 0.2s;
-    }
-
-    .batch-card.open .batch-card-expand { transform: rotate(180deg); }
-
-    .batch-card-details {
-      display: none;
-      padding: 0 16px 16px;
-      border-top: 1px solid var(--border);
-    }
-
-    .batch-card.open .batch-card-details { display: block; }
-
-    .batch-card-details .game-meta { margin-top: 12px; }
-    .batch-card-details .field-group { margin-top: 12px; }
-
-    .batch-card-status {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      flex-shrink: 0;
-      padding: 3px 8px;
-      border-radius: 2px;
-    }
-
-    .batch-card-status.success { background: var(--green); color: #000; }
-    .batch-card-status.failed { background: #ff4444; color: #fff; }
-
-    .btn-publish-batch {
-      width: 100%;
-      margin-top: 20px;
-      padding: 18px;
-      background: var(--green);
-      color: #000;
-      border: none;
-      border-radius: 4px;
-      font-family: var(--font-display);
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      transition: all 0.15s;
-      text-transform: uppercase;
-    }
-
-    .btn-publish-batch:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(57,255,20,0.3);
-    }
-
-    .btn-publish-batch:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    /* eBay connection status */
-    .ebay-status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 12px;
-      padding: 6px 14px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .ebay-status:hover {
-      border-color: var(--accent);
-    }
-
-    .ebay-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--muted);
-      flex-shrink: 0;
-    }
-
-    .ebay-dot.connected { background: var(--green); }
-    .ebay-dot.legacy { background: var(--accent2); }
-    .ebay-dot.disconnected { background: #ff4444; }
-
-    .ebay-status-text { color: var(--muted); }
-
-    /* ── Analysis options ── */
-    .options-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px 18px;
-      margin: 12px 0 4px;
-      font-size: 0.75rem;
-      color: var(--muted);
-    }
-    .options-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-    .options-row input { accent-color: var(--accent); width: 16px; height: 16px; }
-
-    /* ── AI check panel (confidence, flags, comps) ── */
+    /* AI check panel */
     .ai-check {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin-bottom: 16px;
-      font-size: 0.75rem;
-      line-height: 1.5;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px 16px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; box-shadow: var(--shadow);
     }
-    .ai-check-head { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .ai-check-head { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
     .pill {
-      font-size: 0.65rem;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      padding: 3px 8px;
-      border-radius: 20px;
-      border: 1px solid var(--border);
-      color: var(--muted);
+      display: inline-flex; align-items: center; font-size: 12px; font-weight: 500;
+      padding: 3px 10px; border-radius: 999px; border: none;
+      background: var(--surface2); color: var(--muted);
     }
-    .pill.good { color: var(--green); border-color: rgba(57,255,20,0.4); }
-    .pill.warn { color: var(--accent2); border-color: rgba(255,204,0,0.4); }
-    .pill.bad  { color: #ff4444; border-color: rgba(255,68,68,0.5); }
-    .ai-flags { list-style: none; margin: 6px 0; }
-    .ai-flags li { padding-left: 18px; position: relative; margin: 3px 0; }
-    .ai-flags li::before { content: '⚠'; position: absolute; left: 0; color: var(--accent2); }
-    .ai-price-source { margin: 6px 0; }
+    .pill.good { background: var(--green-soft); color: var(--green); }
+    .pill.warn { background: var(--warn-soft); color: var(--warn); }
+    .pill.bad  { background: var(--red-soft); color: var(--red); }
+    .ai-flags { list-style: none; margin: 8px 0; }
+    .ai-flags li {
+      position: relative; margin: 4px 0; padding: 6px 10px 6px 30px; border-radius: 8px;
+      background: var(--warn-soft); color: var(--text);
+    }
+    .ai-flags li::before { content: '⚠'; position: absolute; left: 10px; color: var(--warn); }
+    .ai-price-source { margin: 6px 0; color: var(--muted); }
     .ai-price-source a, .ai-comps a { color: var(--accent); }
-    .use-price { background: transparent; cursor: pointer; font-family: var(--font-mono); margin-left: 4px; }
-    .use-price:hover { color: var(--text); border-color: var(--accent); }
+    .use-price { cursor: pointer; margin-left: 4px; background: var(--accent-soft); color: var(--accent); }
+    .use-price:hover { background: var(--accent); color: var(--on-accent); }
     .ai-comps { margin-top: 8px; }
-    .ai-comps summary { cursor: pointer; color: var(--muted); }
+    .ai-comps summary { cursor: pointer; color: var(--muted); font-weight: 500; }
     .ai-comps ul { list-style: none; margin-top: 6px; }
-    .ai-comps li { margin: 4px 0; color: var(--muted); }
-    .ai-comps li b { color: var(--text); }
-    .ai-comps a { color: var(--accent); }
-    .batch-card-flags { color: var(--accent2); font-size: 0.7rem; white-space: nowrap; }
+    .ai-comps li { margin: 6px 0; color: var(--muted); }
+    .ai-comps li b { color: var(--text); font-weight: 600; }
 
-    /* ── Cross-listing ── */
-    .options-row .markets-label { color: var(--muted); }
+    /* Game info card */
+    .game-card { padding: 16px; margin-bottom: 12px; }
+    .game-card-header { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+    .game-card-header .game-title-input.field-input {
+      flex: 1; width: auto; min-width: 0; min-height: 0; resize: none;
+      font-size: 20px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3;
+      border-color: transparent; padding: 6px 8px; margin: -6px 0 0 -8px;
+    }
+    .game-card-header .game-title-input.field-input:hover { border-color: var(--border); }
+    .game-card-header .game-title-input.field-input:focus { border-color: var(--accent); }
+    .game-card-header .platform-input.field-input {
+      flex: 0 0 150px; width: 150px; text-align: center;
+      background: var(--accent-soft); border-color: transparent; color: var(--accent);
+      font-size: 14px; font-weight: 600; padding: 7px 10px; border-radius: 999px;
+    }
+    @media (max-width: 480px) {
+      .game-card-header { flex-direction: column; gap: 8px; }
+      .game-card-header .game-title-input.field-input { width: calc(100% + 8px); }
+      .game-card-header .platform-input.field-input { flex-basis: auto; width: 170px; align-self: flex-start; }
+    }
+
+    .game-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+    .meta-item { min-width: 0; }
+    .meta-label { font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 3px; }
+    .meta-value { color: var(--text); }
+    .meta-input {
+      width: 100%; background: var(--surface2); border: 1px solid transparent; border-radius: 8px;
+      color: var(--text); font-size: 16px; padding: 7px 10px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .meta-input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+
+    /* Prices */
+    .price-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+    .price-box {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px; min-width: 0; box-shadow: var(--shadow);
+    }
+    .price-box.suggested { background: var(--accent-soft); border-color: var(--accent); }
+    .price-label { font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 2px; }
+    .price-value { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .price-box.suggested .price-value, .price-box.suggested .price-label { color: var(--accent); }
+
+    /* Listing fields */
+    .listing-section { padding: 16px; margin-bottom: 12px; }
+    .field-group { margin-bottom: 16px; }
+    .field-group:last-child { margin-bottom: 0; }
+    .field-label { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .field-label span { font-weight: 400; }
+    .char-count { font-size: 12px; color: var(--muted); margin-top: 5px; text-align: right; }
+    .char-count.over { color: var(--red); }
+    .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .field-pair .field-group { margin-bottom: 0; }
+    .field-pair .char-count { text-align: left; }
+    #price-reasoning, .batch-card-details .price-input-wrap + .char-count { text-align: left; }
+
+    .condition-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    @media (min-width: 600px) { .condition-grid { grid-template-columns: repeat(6, 1fr); } }
+    .condition-btn {
+      min-height: 42px; padding: 6px 4px; border-radius: 10px; cursor: pointer;
+      background: var(--surface2); border: 1px solid transparent; color: var(--text);
+      font-size: 13px; font-weight: 500; transition: background 0.15s, border-color 0.15s;
+    }
+    .condition-btn:hover { border-color: var(--border-strong); }
+    .condition-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+    .price-input-wrap { position: relative; }
+    .price-input-wrap span { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+    .price-input-wrap input { padding-left: 26px !important; }
+
+    /* Sticky bottom bar: Preview + Publish always in reach on a phone */
+    .action-bar {
+      position: sticky; bottom: 0; z-index: 10;
+      display: grid; grid-template-columns: auto 1fr; gap: 8px;
+      margin: 0 -16px; padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+      background: linear-gradient(to bottom, transparent, var(--bg) 22px);
+    }
+    .action-bar .btn-preview { width: auto; min-height: 52px; padding: 0 18px; }
+    #publish-status { margin-top: 4px; }
+
+    /* ── Batch results ── */
+    .batch-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      margin-bottom: 10px; overflow: hidden; box-shadow: var(--shadow); transition: border-color 0.2s;
+    }
+    .batch-card.published { border-color: var(--green); }
+    .batch-card.publish-failed { border-color: var(--red); }
+    .batch-card-summary { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; user-select: none; }
+    .batch-card-summary:hover { background: var(--surface2); }
+    .batch-card-checkbox { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
+    .batch-card-thumb { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--surface2); }
+    .batch-card-title { flex: 1; min-width: 0; }
+    .batch-card-title strong {
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      font-size: 15px; font-weight: 600; line-height: 1.3; word-break: break-word;
+    }
+    .batch-card-title small { color: var(--muted); font-size: 13px; }
+    .batch-card-price { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .batch-card-expand { color: var(--muted); font-size: 11px; flex-shrink: 0; transition: transform 0.2s; }
+    .batch-card.open .batch-card-expand { transform: rotate(180deg); }
+    .batch-card-flags {
+      display: inline-block; margin-left: 4px; font-size: 12px; font-weight: 600; white-space: nowrap;
+      padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn);
+    }
+    .batch-card-details { display: none; padding: 14px; border-top: 1px solid var(--border); background: var(--bg); }
+    .batch-card.open .batch-card-details { display: block; }
+    .batch-card-details .ai-check { box-shadow: none; }
+    .batch-card-details .game-meta { margin-top: 4px; }
+    .batch-card-details .field-group { margin-top: 14px; margin-bottom: 0; }
+    .batch-card-details .meta-input { background: var(--surface); }
+    .batch-card-details .condition-btn { background: var(--surface); border-color: var(--border); }
+    .batch-card-details .condition-btn.active { background: var(--accent-soft); border-color: var(--accent); }
+    .batch-card-status { font-size: 12px; font-weight: 600; flex-shrink: 0; padding: 2px 8px; border-radius: 999px; }
+    .batch-card-status.success { background: var(--green-soft); color: var(--green); }
+    .batch-card-status.failed { background: var(--red-soft); color: var(--red); }
+    .btn-publish-batch {
+      position: sticky; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 10; margin-top: 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    }
+
+    /* ── Marketplace badges / inventory ── */
     .market-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; justify-content: center; }
-    .batch-card-markets { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+    .batch-card-markets { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
+    .batch-card-markets:empty { display: none; }
     .mbadge {
-      font-size: 0.68rem; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
-      background: var(--surface2); color: var(--text); text-decoration: none; white-space: nowrap;
+      font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; text-decoration: none; white-space: nowrap;
+      background: var(--surface2); color: var(--text);
     }
-    .mbadge.listed, .mbadge.sold { border-color: var(--green); color: var(--green); }
-    .mbadge.queued, .mbadge.draft { border-color: var(--accent2); color: var(--accent2); }
-    .mbadge.failed, .mbadge.end_failed, .mbadge.double_sold { border-color: #ff4444; color: #ff6666; }
+    .mbadge.listed, .mbadge.sold { background: var(--green-soft); color: var(--green); }
+    .mbadge.queued, .mbadge.draft { background: var(--warn-soft); color: var(--warn); }
+    .mbadge.failed, .mbadge.end_failed, .mbadge.double_sold { background: var(--red-soft); color: var(--red); }
     .mbadge.ended { color: var(--muted); }
-    .mnote { font-size: 0.68rem; color: var(--muted); margin-top: 6px; text-align: center; word-break: break-word; }
-    .mnote.bad { color: #ff6666; }
+    .mnote { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; word-break: break-word; }
+    .mnote.bad { color: var(--red); }
     .batch-card-markets .mnote { text-align: left; width: 100%; margin-top: 0; }
-    .inv-row { border-bottom: 1px solid var(--border); padding: 10px 0; font-size: 0.75rem; }
-    .inv-row strong { display: block; margin-bottom: 4px; }
-    .inv-row .market-badges { justify-content: flex-start; margin-top: 4px; }
+    .inv-row { border-bottom: 1px solid var(--border); padding: 12px 0; font-size: 13px; }
+    .inv-row:last-child { border-bottom: none; }
+    .inv-row strong { display: block; font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .inv-row .market-badges { justify-content: flex-start; margin-top: 8px; }
     .inv-row .mnote { text-align: left; }
-    .inv-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 0.7rem; color: var(--muted); }
-    .btn-small {
-      font-family: var(--font-mono); font-size: 11px; padding: 6px 14px; border-radius: 4px;
-      border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;
-    }
-    .btn-small.primary { border-color: var(--accent); color: var(--accent); background: transparent; }
+    .inv-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 
+    /* ── Modals: bottom sheet on phones, centered dialog on wider screens ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 150;
+      background: rgba(0,0,0,0.45); backdrop-filter: blur(2px);
+      align-items: flex-end; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface); width: 100%; max-width: 600px; max-height: 88vh; overflow-y: auto;
+      border-radius: 20px 20px 0 0; padding: 20px 18px calc(20px + env(safe-area-inset-bottom));
+      animation: sheetUp 0.25s ease;
+    }
+    @keyframes sheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    @media (min-width: 640px) {
+      .modal-overlay { align-items: center; padding: 24px; }
+      .modal { border-radius: 18px; padding: 24px; max-height: 80vh; }
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .modal-header strong { font-size: 18px; font-weight: 700; }
+    .modal-close {
+      width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
+      background: var(--surface2); color: var(--muted); font-size: 14px; display: grid; place-items: center;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal .btn-publish { margin-top: 4px; }
+
+    .setup-steps { font-size: 14px; line-height: 1.6; color: var(--muted); margin: 0 0 18px 20px; }
+    .setup-steps li { margin-bottom: 8px; }
+    .setup-steps b, .setup-steps code { color: var(--text); }
+    .setup-steps code { font-family: var(--font-mono); font-size: 13px; background: var(--surface2); padding: 1px 5px; border-radius: 5px; }
+    .setup-error { color: var(--red); font-size: 13px; margin-bottom: 12px; min-height: 1em; }
+
+    .description-preview { font-size: 15px; line-height: 1.7; color: var(--text); }
+
+    /* ── Toast ── */
+    #toast {
+      display: none; position: fixed; left: 50%; bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 200;
+      transform: translateX(-50%); max-width: calc(100% - 32px); width: max-content;
+      padding: 12px 18px; border-radius: 12px; background: var(--text); color: var(--bg);
+      font-size: 14px; font-weight: 500; box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateX(-50%) translateY(12px); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0); opacity: 1; }
+    }
   </style>
 </head>
 <body>
 
 <div class="container">
   <header>
-    <div class="header-tag">// retro game lister v2.0{% if sandbox %} · SANDBOX{% endif %}</div>
-    <h1>Retro<span>List</span></h1>
-    <p class="header-sub">Snap → Analyze → List on eBay. Powered by Claude, running on your Mac.</p>
-    <div class="ebay-status-row" style="display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap;">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/><rect x="2" y="6" width="20" height="12" rx="6"/></svg>
+      </div>
+      <div>
+        <h1>RetroList</h1>
+        <p class="header-sub">Snap, analyze, list.</p>
+      </div>
+      {% if sandbox %}<span class="env-badge">Sandbox</span>{% endif %}
+      <button class="btn-small push-right" onclick="openInventory()">Inventory</button>
+    </div>
+    <div class="conn-row">
       <div class="ebay-status" id="ebay-status">
         <span class="ebay-dot disconnected" id="ebay-dot"></span>
         <span class="ebay-status-text" id="ebay-status-text">Checking eBay...</span>
       </div>
-      <button class="btn-connect" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:var(--accent); color:#000; font-weight:700; cursor:pointer;">Connect eBay</button>
-      <button id="ebay-paste-btn" onclick="pasteEbayLink()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--accent); background:transparent; color:var(--accent); cursor:pointer;">Paste eBay link</button>
+      <button class="btn-small primary" id="ebay-connect-btn" onclick="window.location.href='/ebay/auth'" style="display:none">Connect eBay</button>
+      <button class="btn-small" id="ebay-paste-btn" onclick="pasteEbayLink()" style="display:none">Paste eBay link</button>
+      <button class="btn-small" id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none">Disconnect</button>
       <button class="btn-link-small" id="ebay-setup-btn" onclick="openEbaySetup()" title="eBay app keys">⚙ eBay setup</button>
-      <button id="ebay-disconnect-btn" onclick="disconnectEbay()" style="display:none; font-family:var(--font-mono); font-size:11px; padding:6px 14px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">Disconnect</button>
-    </div>
-    <div class="ebay-status-row" style="display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap;">
       <div class="ebay-status" id="mercari-status" style="display:none">
         <span class="ebay-dot disconnected" id="mercari-dot"></span>
         <span class="ebay-status-text" id="mercari-status-text">Mercari</span>
       </div>
       <button class="btn-small primary" id="mercari-login-btn" onclick="mercariLogin()" style="display:none">Log in to Mercari</button>
-      <button class="btn-small" onclick="openInventory()">📦 Inventory</button>
     </div>
     <div class="ebay-banner" id="ebay-banner"></div>
     <div class="ebay-banner" id="attention-banner"></div>
@@ -1158,13 +573,13 @@
 
   <!-- Upload section -->
   <div class="upload-section">
-    <div class="section-label">// 01 — Upload Photo</div>
+    <div class="section-label"><span class="step">1</span> Add photos</div>
 
     <div class="drop-zone" id="drop-zone">
       <input type="file" id="photo-input" accept="image/*,.heic,.heif" multiple />
-      <span class="drop-icon">📷</span>
+      <span class="drop-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
       <div class="drop-text">
-        <strong>Drop photos here or tap to shoot</strong>
+        <strong>Tap to take or choose photos</strong>
         One game: add its front, back, label and box. Lots of games: select every photo and tap “Sort photo dump”.
       </div>
     </div>
@@ -1172,37 +587,30 @@
     <div id="thumb-strip"></div>
 
     <div class="notes-wrap">
-      <textarea id="extra-notes" placeholder="Any extra notes? e.g. 'label has small tear top-right, saves work, new battery'"></textarea>
+      <textarea id="extra-notes" placeholder="Notes (optional): label tear top-right, new battery…"></textarea>
     </div>
 
     <div class="options-row">
       <label><input type="checkbox" id="opt-tested" checked /> Tested &amp; working</label>
     </div>
     <div class="options-row">
-      <span class="markets-label">List on:</span>
+      <span class="markets-label">List on</span>
       <label><input type="checkbox" id="opt-ebay" checked /> eBay</label>
       <label><input type="checkbox" id="opt-mercari" /> Mercari</label>
     </div>
 
-    <button class="btn-analyze" id="analyze-btn" disabled>
-      ⚡ Analyze & Generate Listing
-    </button>
+    <button class="btn-analyze" id="analyze-btn" disabled>Analyze &amp; create listing</button>
 
-    <button class="btn-sort-dump" id="sort-dump-btn" disabled title="Pick lots of photos of several games at once — Claude splits them into one listing per game">
-      🧠 Sort photo dump into games
-    </button>
-
-    <button class="btn-add-batch" id="add-batch-btn" disabled>
-      + Add to Batch
-    </button>
+    <div class="btn-row">
+      <button class="btn-sort-dump" id="sort-dump-btn" disabled title="Pick lots of photos of several games at once — Claude splits them into one listing per game">Sort photo dump</button>
+      <button class="btn-add-batch" id="add-batch-btn" disabled>Add to batch</button>
+    </div>
 
     <div id="batch-queue">
-      <div class="queue-header">Batch Queue</div>
+      <div class="queue-header">Batch</div>
       <div class="queue-hint">Check the groups: ✂ starts a new game at that photo, ⤒ merges a game into the one above.</div>
       <div class="queue-list" id="queue-list"></div>
-      <button class="btn-analyze-batch" id="analyze-batch-btn">
-        ⚡ Analyze All (0 games)
-      </button>
+      <button class="btn-analyze-batch" id="analyze-batch-btn">Analyze all (0 games)</button>
     </div>
 
     <div id="status-bar">
@@ -1217,11 +625,9 @@
   <!-- Batch results -->
   <div id="batch-results">
     <hr class="divider" />
-    <div class="section-label">// 02 — Review & Edit All</div>
+    <div class="section-label"><span class="step">2</span> Review &amp; publish</div>
     <div id="batch-cards"></div>
-    <button class="btn-publish-batch" id="publish-batch-btn">
-      Publish Selected (0)
-    </button>
+    <button class="btn-publish-batch" id="publish-batch-btn">Publish selected (0)</button>
     <div style="text-align:center">
       <span class="reset-link" id="batch-reset-btn">← Start new batch</span>
     </div>
@@ -1230,7 +636,7 @@
   <!-- Results -->
   <div id="results">
     <hr class="divider" />
-    <div class="section-label">// 02 — Review & Edit</div>
+    <div class="section-label"><span class="step">2</span> Review &amp; publish</div>
 
     <div class="ai-check" id="ai-check"></div>
 
@@ -1312,19 +718,20 @@
         </div>
       </div>
 
-      <div class="field-group">
-        <div class="field-label">Package Weight (oz)</div>
-        <input type="number" class="field-input" id="edit-weight" step="0.1" min="1" max="999" value="8" />
-        <div class="char-count" id="weight-hint">Default: ~4oz loose cart, ~12oz CIB</div>
-      </div>
-
-      <div class="field-group">
-        <div class="field-label">List Price (USD)</div>
-        <div class="price-input-wrap">
-          <span>$</span>
-          <input type="number" class="field-input" id="edit-price" step="0.01" min="0.99" />
+      <div class="field-pair">
+        <div class="field-group">
+          <div class="field-label">Price (USD)</div>
+          <div class="price-input-wrap">
+            <span>$</span>
+            <input type="number" class="field-input" id="edit-price" step="0.01" min="0.99" />
+          </div>
+          <div class="char-count" id="price-reasoning">—</div>
         </div>
-        <div class="char-count" id="price-reasoning">—</div>
+        <div class="field-group">
+          <div class="field-label">Weight (oz)</div>
+          <input type="number" class="field-input" id="edit-weight" step="0.1" min="1" max="999" value="8" />
+          <div class="char-count" id="weight-hint">~4 oz loose, ~12 oz CIB</div>
+        </div>
       </div>
 
       <div class="field-group">
@@ -1334,8 +741,10 @@
     </div>
 
     <!-- Actions -->
-    <button class="btn-preview" id="preview-desc-btn">👁 Preview Description</button>
-    <button class="btn-publish" id="publish-btn">🚀 Publish to eBay</button>
+    <div class="action-bar">
+      <button class="btn-preview" id="preview-desc-btn">Preview</button>
+      <button class="btn-publish" id="publish-btn">Publish to eBay</button>
+    </div>
     <div id="publish-status"></div>
 
     <div style="text-align:center">
@@ -1403,7 +812,7 @@
   </div>
 </div>
 
-<div id="toast">✅ Listed on eBay!</div>
+<div id="toast">Listed on eBay!</div>
 
 <script>
   // ── Helpers ─────────────────────────────
@@ -1454,7 +863,7 @@
       ${g.authenticity !== 'likely_authentic' && g.authenticity_notes ? `<div>${esc(g.authenticity_notes)}</div>` : ''}
       ${flags.length ? `<ul class="ai-flags">${flags.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : '<div style="color:var(--green)">✓ Nothing flagged</div>'}
       ${guide ? `<details class="ai-comps"><summary>Wrong version? Other PriceCharting matches</summary><ul>${guide}</ul></details>` : ''}
-      ${data.usage ? `<div style="margin-top:8px;color:var(--muted);font-size:0.65rem">Claude: ${data.usage.total_tokens.toLocaleString()} tokens
+      ${data.usage ? `<div style="margin-top:8px;color:var(--muted);font-size:12px">Claude: ${data.usage.total_tokens.toLocaleString()} tokens
         (${data.usage.output.toLocaleString()} written) · ${data.usage.seconds}s</div>` : ''}`;
   }
 
@@ -1473,11 +882,11 @@
     const formData = new FormData();
     formData.append('game_count', games.length);
     formData.append('tested', document.getElementById('opt-tested').checked);
-    games.forEach((game, g) => {
+    for (const [g, game] of games.entries()) {
       if (game.refs) formData.append(`game_${g}_refs`, JSON.stringify(game.refs));  // already on the Mac
-      else game.files.forEach(f => formData.append(`game_${g}_photos`, f));
+      else for (const f of await Promise.all(game.files.map(uploadFile))) formData.append(`game_${g}_photos`, f);
       formData.append(`game_${g}_notes`, game.notes);
-    });
+    }
 
     const resp = await fetch('/analyze-batch', { method: 'POST', body: formData });
     if (resp.status === 401) { location.reload(); return; }
@@ -1605,7 +1014,7 @@
       });
       if (result.success) {
         closeEbaySetup();
-        showToast('✅ Saved — now tap Connect eBay');
+        showToast('Saved — now tap Connect eBay');
         checkEbayStatus();
       } else {
         errorEl.textContent = result.error;
@@ -1622,7 +1031,7 @@
     if (!url) return;
     try {
       const result = await postJson('/ebay/code', { url });
-      if (result.success) showToast('✅ eBay connected');
+      if (result.success) showToast('eBay connected');
       else alert(result.error);
     } catch (e) {
       alert('Could not connect eBay: ' + e.message);
@@ -1650,7 +1059,7 @@
 
   function publishLabel() {
     const m = selectedMarkets();
-    return m.length ? `🚀 Publish to ${m.map(x => MARKET_NAMES[x]).join(' + ')}` : 'Pick a marketplace ↑';
+    return m.length ? `Publish to ${m.map(x => MARKET_NAMES[x]).join(' + ')}` : 'Pick a marketplace ↑';
   }
 
   // One badge per marketplace; links to the live listing (or the Mercari test-mode screenshot)
@@ -1823,6 +1232,107 @@
   // ── State ──────────────────────────────
   let currentData = null;
   let selectedCondition = 'USED_GOOD';
+  // ── Photo prep: shrink photos on the phone before uploading ──
+  // Phone photos are 3–15 MB each and the Mac scales them to 2400px anyway, so scale them here
+  // first (~0.5–1 MB each) — uploads get ~10× smaller. Small thumbnails are made once per photo,
+  // so the photo strip never re-decodes full-size photos.
+  const UPLOAD_MAX_PX = 2400, THUMB_PX = 240;
+  const photoPrep = new WeakMap();    // File → {ready, upload: Blob|null, thumb: url|null, taken: ''}
+  let prepChain = Promise.resolve();  // one photo at a time: decoding many 48 MP photos at once can crash mobile Safari
+
+  function prepPhoto(file) {
+    let p = photoPrep.get(file);
+    if (!p) {
+      p = { upload: null, thumb: null, taken: '' };
+      p.ready = prepChain = prepChain.then(() => shrinkPhoto(file, p)).catch(() => {});
+      photoPrep.set(file, p);
+    }
+    return p;
+  }
+
+  async function shrinkPhoto(file, p) {
+    p.taken = await readCaptureTime(file).catch(() => '');
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();  // fails for formats this browser can't show (e.g. HEIC in Chrome) → original is sent
+      // Browsers apply the EXIF rotation when drawing, so the output is upright
+      const draw = (max, quality) => {
+        const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+      };
+      const thumb = await draw(THUMB_PX, 0.8);
+      if (thumb) p.thumb = URL.createObjectURL(thumb);
+      const small = await draw(UPLOAD_MAX_PX, 0.92);
+      if (small && small.size < file.size) p.upload = small;  // never send something bigger than the original
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // The file to upload for a photo: the shrunk JPEG when there is one, else the original
+  async function uploadFile(file) {
+    const p = prepPhoto(file);
+    await p.ready;
+    return p.upload
+      ? new File([p.upload], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' })
+      : file;
+  }
+
+  // Shrinking drops EXIF, so read the capture time (the photo dump sorts by it) from the original JPEG.
+  // Same "2026:09:25 12:02:31.123" form the Mac reads; '' if there is none.
+  async function readCaptureTime(file) {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return '';  // not a JPEG
+    for (let off = 2; off + 10 <= v.byteLength; off += 2 + v.getUint16(off + 2)) {
+      const marker = v.getUint16(off);
+      if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) return exifCaptureTime(v, off + 10);  // APP1 "Exif"
+      if ((marker & 0xFF00) !== 0xFF00 || marker === 0xFFDA) break;  // bad marker / start of image data
+    }
+    return '';
+  }
+
+  function exifCaptureTime(v, tiff) {
+    const le = v.getUint16(tiff) === 0x4949;  // "II" = little-endian
+    const u16 = o => v.getUint16(tiff + o, le), u32 = o => v.getUint32(tiff + o, le);
+    const readIfd = (ifd) => {  // tag → offset of its 12-byte entry
+      const tags = {};
+      for (let i = 0, n = u16(ifd); i < n; i++) tags[u16(ifd + 2 + i * 12)] = ifd + 2 + i * 12;
+      return tags;
+    };
+    const ascii = (entry) => {
+      const count = u32(entry + 4), start = count > 4 ? u32(entry + 8) : entry + 8;
+      let text = '';
+      for (let i = 0; i < count; i++) {
+        const c = v.getUint8(tiff + start + i);
+        if (!c) break;
+        text += String.fromCharCode(c);
+      }
+      return text.trim();
+    };
+    const ifd0 = readIfd(u32(4));
+    const sub = ifd0[0x8769] ? readIfd(u32(ifd0[0x8769] + 8)) : {};  // Exif sub-IFD
+    const stamp = sub[0x9003] ? ascii(sub[0x9003]) : ifd0[0x0132] ? ascii(ifd0[0x0132]) : '';  // DateTimeOriginal, else DateTime
+    const fraction = sub[0x9291] ? ascii(sub[0x9291]) : '';  // SubSecTimeOriginal
+    return stamp && fraction ? `${stamp}.${fraction}` : stamp;
+  }
+
+  // Show a photo's small thumbnail in an <img> as soon as it's ready
+  function showThumb(img, file) {
+    const p = prepPhoto(file);
+    const set = () => {
+      if (p.thumb) { img.src = p.thumb; return; }
+      img.src = URL.createObjectURL(file);  // couldn't shrink it: fall back to the original
+      img.onload = () => URL.revokeObjectURL(img.src);
+    };
+    p.thumb ? set() : p.ready.then(set);
+  }
+
   let selectedFiles = [];  // Array of File objects
 
   // Batch state
@@ -1875,6 +1385,7 @@
   function addFiles(files) {
     if (!files.length) return;
     selectedFiles = selectedFiles.concat(files);
+    files.forEach(prepPhoto);  // start shrinking right away, while the user reviews / types notes
     renderThumbs();
     analyzeBtn.disabled = false;
     addBatchBtn.disabled = false;
@@ -1906,8 +1417,7 @@
       item.className = 'thumb-item' + (i === 0 ? ' primary' : '');
 
       const img = document.createElement('img');
-      img.src = URL.createObjectURL(file);
-      img.onload = () => URL.revokeObjectURL(img.src);
+      showThumb(img, file);
       item.appendChild(img);
 
       const removeBtn = document.createElement('button');
@@ -1992,7 +1502,7 @@
       setStatus('s1', 'error', `✗ Error: ${esc(err.message)}`);
     } finally {
       analyzeBtn.disabled = false;
-      analyzeBtn.textContent = failed ? '⚡ Try Again' : '⚡ Analyze & Generate Listing';
+      analyzeBtn.textContent = failed ? 'Try again' : 'Analyze & create listing';
     }
   });
 
@@ -2120,7 +1630,7 @@
       show(listings);
       finish(listings);
       if (result.success) showToast(listings.mercari && listings.mercari.status === 'queued'
-        ? '✅ Published — Mercari is being filled in on your Mac' : '✅ Published!');
+        ? 'Published — Mercari is being filled in on your Mac' : 'Published!');
       else showToast('✗ Publish failed');
       if (listings.mercari && listings.mercari.status === 'queued') {
         checkMercariStatus();
@@ -2158,7 +1668,7 @@
     resetUploadZone();
     results.style.display = 'none';
     statusBar.style.display = 'none';
-    analyzeBtn.textContent = '⚡ Analyze & Generate Listing';
+    analyzeBtn.textContent = 'Analyze & create listing';
     publishBtn.disabled = false;
     delete publishBtn.dataset.done;
     publishBtn.textContent = publishLabel();
@@ -2173,9 +1683,11 @@
 
   // ── Batch: Add to Queue ───────────────
   const makeGroup = (files, extra = {}) => ({
-    files, notes: '', thumbUrls: files.map(f => URL.createObjectURL(f)), ...extra,
+    files, notes: '', thumbUrls: files.map(f => prepPhoto(f).thumb || URL.createObjectURL(f)), ...extra,
   });
-  const dropGroup = (group) => group.thumbUrls.forEach(u => URL.revokeObjectURL(u));
+  const dropGroup = (group) => group.thumbUrls.forEach((u, i) => {
+    if (u !== photoPrep.get(group.files[i])?.thumb) URL.revokeObjectURL(u);  // shared prep thumbs stay
+  });
 
   addBatchBtn.addEventListener('click', () => {
     if (selectedFiles.length === 0) return;
@@ -2190,13 +1702,19 @@
     if (files.length < 2) return;
     if (files.length > 60) { alert('Up to 60 photos at a time — split your dump into a few rounds.'); return; }
 
-    const formData = new FormData();
-    files.forEach(f => formData.append('photos', f));
-    formData.append('modified', JSON.stringify(files.map(f => f.lastModified || 0)));
     sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = true;
-    sortDumpBtn.textContent = `Uploading & sorting ${files.length} photos... (~30–60s)`;
+    sortDumpBtn.textContent = `Sorting ${files.length} photos… (~30–60s)`;
 
     try {
+      // Shrunk photos carry their capture time in `taken`; a shrunk photo without one would
+      // lose its place in the order, so that photo goes up as the original instead
+      const preps = files.map(prepPhoto);
+      await Promise.all(preps.map(p => p.ready));
+      const formData = new FormData();
+      for (const [i, f] of files.entries()) formData.append('photos', preps[i].taken ? await uploadFile(f) : f);
+      formData.append('taken', JSON.stringify(preps.map(p => p.taken)));
+      formData.append('modified', JSON.stringify(files.map(f => f.lastModified || 0)));
+
       const resp = await fetch('/group-photos', { method: 'POST', body: formData });
       if (resp.status === 401) { location.reload(); return; }
       if (resp.status === 413) throw new Error('Too much data at once — try fewer photos per dump');
@@ -2215,7 +1733,7 @@
       alert('Sorting failed: ' + err.message);
       sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = false;
     } finally {
-      sortDumpBtn.textContent = '🧠 Sort photo dump into games';
+      sortDumpBtn.textContent = 'Sort photo dump';
     }
   });
 
@@ -2285,7 +1803,7 @@
     queueList.querySelectorAll('.queue-split').forEach(btn =>
       btn.addEventListener('click', (e) => splitGroup(parseInt(e.currentTarget.dataset.idx), parseInt(e.currentTarget.dataset.photo))));
 
-    analyzeBatchBtn.textContent = `⚡ Analyze All (${batchQueue.length} game${batchQueue.length > 1 ? 's' : ''})`;
+    analyzeBatchBtn.textContent = `Analyze all (${batchQueue.length} game${batchQueue.length > 1 ? 's' : ''})`;
   }
 
   // ── Batch: Analyze All ────────────────
@@ -2339,7 +1857,7 @@
     }
 
     analyzeBatchBtn.disabled = false;
-    analyzeBatchBtn.textContent = `⚡ Analyze All (${totalGames} game${totalGames > 1 ? 's' : ''})`;
+    analyzeBatchBtn.textContent = `Analyze all (${totalGames} game${totalGames > 1 ? 's' : ''})`;
   });
 
   // ── Batch: Result cards ───────────────
@@ -2364,9 +1882,8 @@
           <img class="batch-card-thumb" src="${thumbSrc}" alt="" />
           <div class="batch-card-title">
             <strong>${esc(l.title || g.game_title)}</strong>
-            <small>${esc(g.platform)} · ${esc(g.year)}</small>
+            <small>${esc(g.platform)} · ${esc(g.year)}${l.flags.length ? ` <span class="batch-card-flags">⚠ ${l.flags.length} to check</span>` : ''}</small>
           </div>
-          ${l.flags.length ? `<span class="batch-card-flags">⚠ ${l.flags.length}</span>` : ''}
           <span class="batch-card-price">${money(l.suggested_price)}</span>
           <span class="batch-card-expand">▼</span>
         </div>
@@ -2403,7 +1920,7 @@
           <div class="field-group">
             <div class="field-label">Description <span style="color:var(--muted);font-size:0.7rem">(HTML)</span></div>
             <textarea class="field-input" data-field="description" rows="5" style="resize:vertical;min-height:80px;font-size:0.75rem;line-height:1.4">${esc(l.description)}</textarea>
-            <button class="btn-preview batch-preview-btn" style="margin-top:8px">👁 Preview Description</button>
+            <button class="btn-preview batch-preview-btn" style="margin-top:8px">Preview description</button>
           </div>
         </div>
       `;
@@ -2443,7 +1960,7 @@
     const checked = batchCardsEl.querySelectorAll('.batch-card-checkbox:checked:not(:disabled)').length;
     const markets = selectedMarkets();
     publishBatchBtn.textContent = markets.length
-      ? `Publish Selected (${checked}) → ${markets.map(m => MARKET_NAMES[m]).join(' + ')}` : 'Pick a marketplace ↑';
+      ? `Publish selected (${checked}) → ${markets.map(m => MARKET_NAMES[m]).join(' + ')}` : 'Pick a marketplace ↑';
     publishBatchBtn.disabled = checked === 0 || !markets.length;
   }
 

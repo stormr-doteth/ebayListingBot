@@ -4,19 +4,39 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RetroList — Login</title>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
+    /* Same tokens as index.html */
     :root {
-      --bg: #0a0a0f;
-      --surface: #13131a;
-      --surface2: #1c1c28;
-      --border: #2a2a3d;
-      --accent: #ff6b2b;
-      --green: #39ff14;
-      --text: #e8e8f0;
-      --muted: #6b6b8a;
-      --font-mono: 'Space Mono', monospace;
-      --font-display: 'Syne', sans-serif;
+      color-scheme: light dark;
+      --bg: #f5f5f3;
+      --surface: #ffffff;
+      --border: #e5e5e1;
+      --border-strong: #d4d4cf;
+      --text: #18181b;
+      --muted: #6b6b73;
+      --accent: #e8590c;
+      --accent-hover: #cf4d07;
+      --accent-soft: rgba(232, 89, 12, 0.10);
+      --on-accent: #ffffff;
+      --red: #dc2626;
+      --red-soft: rgba(220, 38, 38, 0.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f0f11;
+        --surface: #18181b;
+        --border: #2a2a2f;
+        --border-strong: #3a3a41;
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --accent: #fb7a35;
+        --accent-hover: #ff8c4d;
+        --accent-soft: rgba(251, 122, 53, 0.14);
+        --on-accent: #1a0c03;
+        --red: #f87171;
+        --red-soft: rgba(248, 113, 113, 0.12);
+      }
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,96 +44,90 @@
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--font-mono);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-    }
-
-    /* Scanline overlay */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px);
-      pointer-events: none;
-      z-index: 100;
+      padding: 16px;
+      -webkit-font-smoothing: antialiased;
     }
 
     .login-box {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 48px 36px;
+      border-radius: 18px;
+      padding: 36px 28px;
       text-align: center;
       max-width: 360px;
-      width: 90%;
+      width: 100%;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 28px rgba(0,0,0,0.06);
     }
 
-    h1 {
-      font-family: var(--font-display);
-      font-size: 1.8rem;
-      font-weight: 800;
-      color: var(--accent);
-      margin-bottom: 8px;
+    .logo {
+      width: 52px; height: 52px; border-radius: 14px; margin: 0 auto 14px;
+      background: var(--accent); color: var(--on-accent);
+      display: grid; place-items: center;
     }
+    .logo svg { width: 30px; height: 30px; }
 
-    .subtitle {
-      color: var(--muted);
-      font-size: 0.8rem;
-      margin-bottom: 32px;
-    }
+    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+
+    .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
 
     input[type="password"] {
       width: 100%;
-      padding: 14px 16px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
+      padding: 13px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
       color: var(--text);
-      font-family: var(--font-mono);
-      font-size: 1.2rem;
+      font-family: inherit;
+      font-size: 20px;
       text-align: center;
       letter-spacing: 8px;
       outline: none;
-      margin-bottom: 20px;
+      margin-bottom: 12px;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-
-    input[type="password"]:focus {
-      border-color: var(--accent);
-    }
+    input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
     button {
       width: 100%;
-      padding: 14px;
+      min-height: 50px;
       background: var(--accent);
-      color: #fff;
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 1rem;
+      color: var(--on-accent);
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 16px;
       border: none;
-      border-radius: 8px;
+      border-radius: 12px;
       cursor: pointer;
+      transition: background 0.15s;
     }
-
-    button:hover { opacity: 0.9; }
+    button:hover { background: var(--accent-hover); }
 
     .error {
-      color: #ff4444;
-      font-size: 0.8rem;
-      margin-bottom: 16px;
+      background: var(--red-soft);
+      color: var(--red);
+      font-size: 14px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      margin-bottom: 14px;
     }
   </style>
 </head>
 <body>
   <div class="login-box">
-    <h1>RETROLIST</h1>
-    <p class="subtitle">Enter PIN to continue</p>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/><rect x="2" y="6" width="20" height="12" rx="6"/></svg>
+    </div>
+    <h1>RetroList</h1>
+    <p class="subtitle">Enter your PIN to continue</p>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     <form method="POST">
-      <input type="password" name="pin" placeholder="----" maxlength="20" autofocus />
-      <button type="submit">UNLOCK</button>
+      <input type="password" name="pin" placeholder="••••" maxlength="20" autofocus />
+      <button type="submit">Unlock</button>
     </form>
   </div>
 </body>

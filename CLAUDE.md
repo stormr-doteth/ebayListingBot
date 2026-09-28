@@ -10,9 +10,9 @@ ebayListingBot/
 ├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing, sale sync
 ├── crosslist.py                     # Inventory DB (SQLite) + Mercari publisher (Playwright worker)
 ├── templates/
-│   ├── index.html                   # Single-page frontend, retro dark theme
+│   ├── index.html                   # Single-page frontend (light/dark)
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
-├── pricecharting_master_price.csv   # Local price guide (~23k games, 14 consoles)
+├── pricecharting_master_price.csv   # Local price guide (~28k games, 17 consoles, from the PriceCharting scraper)
 ├── setup_policies.py                # One-time: create eBay business policies
 ├── setup_shipping_policy.py         # One-time: create calculated-shipping policy
 ├── requirements.txt
@@ -30,7 +30,7 @@ ebayListingBot/
 - **AI**: the local **Claude Code CLI** in headless mode (`claude -p`). It runs on Storm's Claude plan login — no API key, no per-call billing. `run_claude()` removes `ANTHROPIC_API_KEY` from the subprocess env so it can never silently bill an API key.
 - **Pricing**: PriceCharting loose/CIB price — local `pricecharting_master_price.csv` snapshot, or the live PriceCharting API when `PRICECHARTING_API_KEY` is set. No web research.
 - **Listing**: eBay Inventory REST API + Trading API `UploadSiteHostedPictures` for images; Mercari via Playwright (no public API)
-- **Frontend**: Vanilla HTML/CSS/JS, no framework, Space Mono + Syne fonts
+- **Frontend**: Vanilla HTML/CSS/JS, no framework, Inter font
 
 ## Environment Variables (in `.env`)
 ```bash
@@ -172,9 +172,11 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 - All model text is HTML-escaped (`esc()`) before rendering.
 
 ## Design System
-- Background `#0a0a0f`, Surface `#13131a`, Accent `#ff6b2b`, Yellow `#ffcc00`, Green `#39ff14`
-- Fonts: Space Mono (body), Syne (display). Retro terminal look: scanlines + grid background.
-- No CSS framework — all styles in the `<style>` block in index.html
+- Clean modern look, light + dark (follows `prefers-color-scheme`). Colors are CSS variables on `:root` (e.g. `--accent`, `--surface`, `--green`, `--warn`, `--red` + `-soft` tints) — never hard-code colors.
+- Font: Inter. Inputs are 16px so iOS doesn't zoom on focus.
+- Buttons: one primary style (`.btn-analyze`, `.btn-publish`, `.btn-*-batch`), one secondary (`.btn-sort-dump`, `.btn-add-batch`, `.btn-preview`), and `.btn-small` pills for everything in the header/toolbars.
+- Publish is in a sticky bottom `.action-bar`; modals are bottom sheets on phones.
+- No CSS framework — all styles in the `<style>` block in index.html (login.html repeats the tokens).
 
 ## How to Run
 ```bash
@@ -192,8 +194,8 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 - [ ] Poshmark / Etsy / Depop adapters
 - [ ] eBay condition options per category are hard-coded (6 values); could be fetched from the Metadata API
 - [ ] No "save as draft" (unpublished offer) option yet
-- [ ] Price CSV is a static snapshot (Mar 2026) — refresh it, or add a PriceCharting API key for live prices
-- [ ] CSV has no 3DS/Switch/PS4+ — those fall back to Claude's estimate
+- [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
+- [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate
 
 ## Context About the Developer
 - Storm lists a retro game collection on eBay — mostly N64, SNES, PS1/PS2 era, some DS/3DS/Wii
