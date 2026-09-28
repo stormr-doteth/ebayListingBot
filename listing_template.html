@@ -1,0 +1,17 @@
+<!--
+  eBay/Mercari listing description. Edit the wording freely, then restart the app.
+  Placeholders (filled in from the review screen, and updated when you edit those fields):
+    {title}      game title                      e.g. Super Mario 64
+    {platform}   platform                        e.g. Nintendo 64
+    {details}    region, year, variant in ( )    e.g.  (USA, 1996, Player's Choice) — empty if unknown
+    {includes}   what's included                 e.g. Game, Manual, Box/Case
+    {condition}  the wear Claude saw + your notes
+    {tested}     "Tested and working" or "Not tested" (the Tested & working checkbox)
+  Only <p>, <ul>, <li>, <b>, <br> — eBay strips styles and scripts. This comment isn't included.
+-->
+<p><b>{title}</b> for {platform}{details}.</p>
+<ul>
+  <li><b>Includes:</b> {includes}</li>
+  <li><b>Condition:</b> {condition}</li>
+  <li><b>Tested:</b> {tested}</li>
+</ul>

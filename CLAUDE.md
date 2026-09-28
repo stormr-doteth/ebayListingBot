@@ -10,9 +10,10 @@ ebayListingBot/
 ├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing, sale sync
 ├── crosslist.py                     # Inventory DB (SQLite) + Mercari publisher (Playwright worker)
 ├── templates/
-│   ├── index.html                   # Single-page frontend, retro dark theme
+│   ├── index.html                   # Single-page frontend (light/dark)
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
-├── pricecharting_master_price.csv   # Local price guide (~23k games, 14 consoles)
+├── listing_template.html            # Listing description template ({title}, {condition}, …) — edit wording here
+├── pricecharting_master_price.csv   # Local price guide (~28k games, 17 consoles, from the PriceCharting scraper)
 ├── setup_policies.py                # One-time: create eBay business policies
 ├── setup_shipping_policy.py         # One-time: create calculated-shipping policy
 ├── requirements.txt
@@ -30,7 +31,7 @@ ebayListingBot/
 - **AI**: the local **Claude Code CLI** in headless mode (`claude -p`). It runs on Storm's Claude plan login — no API key, no per-call billing. `run_claude()` removes `ANTHROPIC_API_KEY` from the subprocess env so it can never silently bill an API key.
 - **Pricing**: PriceCharting loose/CIB price — local `pricecharting_master_price.csv` snapshot, or the live PriceCharting API when `PRICECHARTING_API_KEY` is set. No web research.
 - **Listing**: eBay Inventory REST API + Trading API `UploadSiteHostedPictures` for images; Mercari via Playwright (no public API)
-- **Frontend**: Vanilla HTML/CSS/JS, no framework, Space Mono + Syne fonts
+- **Frontend**: Vanilla HTML/CSS/JS, no framework, Inter font
 
 ## Environment Variables (in `.env`)
 ```bash
@@ -71,7 +72,7 @@ CROSSLIST_AUTO_END=true                # end the other listing automatically whe
 ## Claude Pipeline (app.py)
 Per game, run in a thread pool and streamed to the browser as SSE (`/analyze-batch`):
 1. **`save_photos()`** — every upload is re-encoded to JPEG (HEIC converted, rotation fixed, EXIF/GPS stripped), max 2400px for eBay, plus a 1568px copy in `ai/` for Claude.
-2. **`analyze_photos()`** — ONE `claude -p` call with the photos attached via `@photo_N.jpg` mentions (the CLI only attaches ~3, so extras go on a numbered contact sheet and Claude may `Read` a full-size photo). Returns `GAME_INFO_SCHEMA`: identification (title, platform, variant, region, MPN, completeness), condition, authenticity, confidence, flags, **plus the eBay title + HTML description** and a rough `estimated_loose/cib` fallback.
+2. **`analyze_photos()`** — ONE `claude -p` call with the photos attached via `@photo_N.jpg` mentions (the CLI only attaches ~3, so extras go on a numbered contact sheet and Claude may `Read` a full-size photo). Returns `GAME_INFO_SCHEMA`: identification (title, platform, variant, region, MPN, completeness), condition, authenticity, confidence, flags, buyer-facing `condition_notes`, **plus the eBay title** and a rough `estimated_loose/cib` fallback. Claude does NOT write the description.
 3. **`price_listing()`** — pricing is deterministic, not Claude's call: PriceCharting API rows if `PRICECHARTING_API_KEY` is set, else the local CSV. `pick_price_row()` chooses the row for the exact variant (uses the variant field, listing title and MPN suffix like `GH`). Game + box + manual → **CIB** price; anything less → **loose**. Not in the guide → Claude's estimate, flagged.
 4. **`_clean_game_info()` / `_clean_title()`** — guard rails: plain item-specific values, 80-char title, strip "Authentic" unless authenticity is `likely_authentic`.
 
@@ -130,7 +131,8 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
 | `/` | GET | Main UI |
 | `/login` | GET/POST | PIN login (rate-limited: 5 tries / 5 min per IP) |
 | `/analyze-batch` | POST | FormData `game_count`, `game_{n}_photos`, `game_{n}_notes`, `tested` → SSE `progress` / `result` / `error` / `done`. Used for single games too (count = 1). |
-| `/group-photos` | POST | Photo dump: `photos` + `modified` (JSON lastModified list) → `{groups: [{item, photos: [{ref, index}]}]}` |
+| `/photos` | POST | One photo (`photo`, `taken`) uploaded in the background → `{ref, taken}` |
+| `/group-photos` | POST | Photo dump: `refs` (from `/photos`) or `photos` files, + `taken` / `modified` JSON lists → `{groups: [{item, photos: [{ref, index}]}]}` |
 | `/publish` | POST | JSON `{listing, game_info, photos, markets: ["ebay","mercari"], item_id?}` → `{success, item_id, results: {market: {status, url, error}}, listing_id, url}` |
 | `/publish-batch` | POST | JSON `{games: [{…, item_id?}], markets}` → `{results: [...]}` |
 | `/items/status` | POST | `{ids}` → items with per-market listing status (polled while Mercari works) |
@@ -164,6 +166,14 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 - Aspects with unknown values (`N/A`, `Unknown`) are omitted rather than sent
 
 ## Frontend Behavior
+- **Photo uploads**: each photo is shrunk to 2400px in the browser (`shrinkPhoto()`, one at a time) and sent to
+  `/photos` in the background as soon as it's picked (`preUpload()`, 2 at a time); Analyze / Sort then send refs
+  (`uploadedRefs()`), falling back to uploading the files if a background upload failed. Capture times are read
+  from the original JPEG's EXIF in the browser (`readCaptureTime()`) because shrinking drops EXIF.
+  Uses the image `load` event, not `img.decode()` (the latter can stall forever in a background tab).
+- **Description**: `listing_template.html` (comment stripped, injected into the page) is filled by `fillTemplate()`
+  from the review fields — title, platform, region/year/variant, includes, condition notes, and the Tested checkbox.
+  It refills when those fields change, until the seller edits the description by hand.
 - Mobile-first: phone camera → listing. All photos are analyzed; first photo leads the eBay gallery.
 - Option: "Tested & working" (controls whether the listing may say Tested) — remembered in localStorage.
 - Single game and batch both stream progress from `/analyze-batch`.
@@ -172,9 +182,11 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 - All model text is HTML-escaped (`esc()`) before rendering.
 
 ## Design System
-- Background `#0a0a0f`, Surface `#13131a`, Accent `#ff6b2b`, Yellow `#ffcc00`, Green `#39ff14`
-- Fonts: Space Mono (body), Syne (display). Retro terminal look: scanlines + grid background.
-- No CSS framework — all styles in the `<style>` block in index.html
+- Clean modern look, light + dark (follows `prefers-color-scheme`). Colors are CSS variables on `:root` (e.g. `--accent`, `--surface`, `--green`, `--warn`, `--red` + `-soft` tints) — never hard-code colors.
+- Font: Inter. Inputs are 16px so iOS doesn't zoom on focus.
+- Buttons: one primary style (`.btn-analyze`, `.btn-publish`, `.btn-*-batch`), one secondary (`.btn-sort-dump`, `.btn-add-batch`, `.btn-preview`), and `.btn-small` pills for everything in the header/toolbars.
+- Publish is in a sticky bottom `.action-bar`; modals are bottom sheets on phones.
+- No CSS framework — all styles in the `<style>` block in index.html (login.html repeats the tokens).
 
 ## How to Run
 ```bash
@@ -192,8 +204,8 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 - [ ] Poshmark / Etsy / Depop adapters
 - [ ] eBay condition options per category are hard-coded (6 values); could be fetched from the Metadata API
 - [ ] No "save as draft" (unpublished offer) option yet
-- [ ] Price CSV is a static snapshot (Mar 2026) — refresh it, or add a PriceCharting API key for live prices
-- [ ] CSV has no 3DS/Switch/PS4+ — those fall back to Claude's estimate
+- [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
+- [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate
 
 ## Context About the Developer
 - Storm lists a retro game collection on eBay — mostly N64, SNES, PS1/PS2 era, some DS/3DS/Wii
