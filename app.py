@@ -390,21 +390,20 @@ GAME_INFO_SCHEMA = {
         "has_box": {"type": "boolean"},
         "has_manual": {"type": "boolean"},
         "extras": {"type": "array", "items": {"type": "string"}, "description": "Inserts, posters, maps, registration cards visible"},
-        "condition_notes": {"type": "string", "description": "Specific wear you can see: label tears, fading, scratches, writing, stickers, box crushing"},
+        "condition_notes": {"type": "string", "description": "Buyers read this: one or two plain sentences on the actual wear (label tears, fading, scratches, writing, stickers, box crushing) plus relevant seller notes (e.g. new save battery)"},
         "condition": {"type": "string", "enum": CONDITIONS},
         "authenticity": {"type": "string", "enum": ["likely_authentic", "uncertain", "likely_reproduction"]},
         "authenticity_notes": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": "How sure you are of the exact title AND variant"},
         "flags": {"type": "array", "items": {"type": "string"}, "description": "Short things the seller should verify before listing"},
         "listing_title": {"type": "string", "description": "eBay title, max 80 characters"},
-        "listing_description": {"type": "string", "description": "Listing description as simple HTML"},
         "estimated_loose": {"type": "number", "description": "Your best estimate of the loose price in USD, used only if the game isn't in the price guide"},
         "estimated_cib": {"type": "number", "description": "Your best estimate of the complete-in-box price in USD, used only if the game isn't in the price guide"},
     },
     "required": ["game_title", "platform", "item_type", "variant", "year", "region", "publisher", "genre",
                  "rating", "mpn", "has_game", "has_box", "has_manual", "extras", "condition_notes",
                  "condition", "authenticity", "authenticity_notes", "confidence", "flags",
-                 "listing_title", "listing_description", "estimated_loose", "estimated_cib"],
+                 "listing_title", "estimated_loose", "estimated_cib"],
 }
 
 class ClaudeError(RuntimeError):
@@ -467,8 +466,8 @@ def _add_usage(total: dict, result: dict):
 
 
 def analyze_photos(photo_dir: Path, notes: str, tested: bool, usage: dict | None = None) -> dict:
-    """One Claude call: identify and grade the item from every photo, and write the eBay title and
-    description. Pricing is NOT Claude's job — it's looked up from PriceCharting afterwards."""
+    """One Claude call: identify and grade the item from every photo, and write the eBay title (the
+    description comes from listing_template.html, filled in by the browser). Pricing is NOT Claude's job — it's looked up from PriceCharting afterwards."""
     photos = sorted((photo_dir / "ai").glob("photo_*.jpg"), key=lambda p: int(p.stem.split("_")[1]))
     # @-mentions attach images straight into the prompt (fast, no tool round-trip), but the CLI
     # only attaches the first few. With more photos, the rest go on one numbered contact sheet,
@@ -491,7 +490,13 @@ Identify exactly what it is and grade it:
   Part-number suffixes matter: e.g. SLUS-xxxxxGH = Greatest Hits, -P = Platinum.
 - variant: just the name (e.g. "Greatest Hits"), or "" for a standard first release.
 - Region: judge from rating logos, language, part-number suffix (-USA, -EUR, -JPN, SLUS/SLES/SLPS).
+- has_box / has_manual / extras: only what you can actually see — they go in the listing as
+  "Includes". If something might be missing, leave it out.
 - Condition: be specific about visible wear. Only use NEW for factory-sealed items.
+- condition_notes goes straight into the listing, so write it for buyers: honest and specific,
+  no mention of photos, nothing addressed to the seller, nothing salesy. Include seller's notes
+  that matter to a buyer (new battery, saves work, writing on label). "Light wear" style
+  summaries only when you truly can't see more.
 - Authenticity: check label print quality, fonts, screws, board/disc details you can see. Say
   "uncertain" rather than guessing when the photos don't show enough.
 - Field values (publisher, genre, rating, mpn, year) are eBay item specifics: plain values only,
@@ -500,7 +505,7 @@ Identify exactly what it is and grade it:
   e.g. "Back of cart not shown", "Can't read part number". Refer to photos by what they show
   ("the disc photo"), never by filename. Empty if nothing important.
 
-Then write the eBay listing:
+Then write the eBay title (the description is filled in from a template by the app):
 
 listing_title (max 80 characters — this is what buyers search):
 - Lead with the exact game title, then platform, then what matters to buyers: variant
@@ -509,14 +514,6 @@ listing_title (max 80 characters — this is what buyers search):
   "Tested" (only if confirmed below).
 - Use common search abbreviations when they save space (N64, SNES, NES, PS1, PS2, GBA, GC).
 - No ALL CAPS words except abbreviations, no emoji, no "L@@K", no "Rare" unless it genuinely is.
-
-listing_description (simple HTML: <p>, <ul>, <li>, <b> only, no styles or scripts):
-- One short paragraph: what it is (title, platform, region, variant).
-- A bullet list of at most 6 short bullets: what's included; condition specifics (the actual
-  wear, honestly); tested/working status only as stated below.
-- Only describe as included what you can see. If something might be missing, leave it out.
-- One line: "Ships quickly and well packed." Nothing salesy, no filler, no price.
-- Don't mention photos or anything addressed to the seller — buyers read this.
 
 estimated_loose / estimated_cib: rough USD values from your own knowledge. They're only used
 when the game isn't in the price guide, so don't research — just estimate.
@@ -682,7 +679,7 @@ def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: boo
     matched = price_info["matched"]
     listing = {
         "title": _clean_title(game_info.pop("listing_title", ""), game_info),
-        "description": game_info.pop("listing_description", ""),
+        "description": "",  # the browser fills it from listing_template.html
         "condition": game_info["condition"] if game_info.get("condition") in CONDITIONS else "USED_GOOD",
         "suggested_price": price_info["price"],
         "price_reasoning": (f"PriceCharting {price_info['basis']} price for “{matched['title']}”"
@@ -1325,11 +1322,51 @@ def ebay_disconnect():
 @app.route("/")
 @require_pin
 def index():
-    return render_template("index.html", sandbox=EBAY_SANDBOX)
+    return render_template("index.html", sandbox=EBAY_SANDBOX, listing_template=load_listing_template())
+
+
+def load_listing_template() -> str:
+    """listing_template.html without its instructions comment — the browser fills it in."""
+    path = BASE_DIR / "listing_template.html"
+    text = path.read_text(encoding="utf-8") if path.exists() else \
+        "<p><b>{title}</b> for {platform}{details}.</p><ul><li><b>Includes:</b> {includes}</li>" \
+        "<li><b>Condition:</b> {condition}</li><li><b>Tested:</b> {tested}</li></ul>"
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
 
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
+
+
+@app.route("/photos", methods=["POST"])
+@require_pin
+def upload_photo():
+    """One photo, uploaded in the background as soon as it's picked, so tapping Analyze or
+    Sort only has to send refs. Form: photo (file), taken (capture time the browser read, if any).
+    Returns {ref, taken}."""
+    taken: list = []
+    refs = save_photos([request.files.get("photo")], UPLOAD_DIR / uuid.uuid4().hex, taken)
+    if not refs:
+        return jsonify({"error": "Unreadable photo"}), 400
+    return jsonify({"ref": refs[0], "taken": taken[0][0] or request.form.get("taken", "")[:40]})
+
+
+def _link_dump_photos(refs: list[str], dump_dir: Path, taken: list) -> list[str]:
+    """Photo dump from pre-uploaded refs: link each photo (and its AI copy) into the dump folder as
+    photo_N.jpg, same layout save_photos() makes. Appends ("", upload index) to `taken` per photo —
+    the capture times come from the browser."""
+    (dump_dir / "ai").mkdir(parents=True, exist_ok=True)
+    kept = []
+    for i, ref in enumerate(refs):
+        path = resolve_photo(ref)
+        if not path or not (path.parent / "ai" / path.name).exists():
+            continue
+        name = f"photo_{len(kept)}.jpg"
+        os.link(path, dump_dir / name)
+        os.link(path.parent / "ai" / path.name, dump_dir / "ai" / name)
+        taken.append(("", i))
+        kept.append(str((dump_dir / name).relative_to(UPLOAD_DIR)))
+    return kept
 
 
 @app.route("/group-photos", methods=["POST"])
@@ -1337,12 +1374,16 @@ def _sse(event: dict) -> str:
 def group_photos_route():
     """Photo dump → sorted by capture time → split into one group per game.
 
-    Form: photos (files), taken (JSON list of each photo's EXIF capture time read by the browser —
+    Form: photos (files) or refs (JSON list of photos already sent to /photos), taken (JSON list of each photo's EXIF capture time read by the browser —
     photos it shrank before upload have lost their EXIF), modified (JSON list of each file's
     lastModified ms, a fallback when a photo has no capture time at all). Returns {groups: [{item, photos: [{ref, index}]}]} where `index`
     is the file's position in the upload, so the browser can show its own thumbnails."""
     files = request.files.getlist("photos")
-    if not 2 <= len(files) <= DUMP_MAX_PHOTOS:
+    try:
+        uploaded = [str(r) for r in json.loads(request.form.get("refs", "[]"))]
+    except (ValueError, TypeError):
+        uploaded = []
+    if not 2 <= len(uploaded or files) <= DUMP_MAX_PHOTOS:
         return jsonify({"error": f"Send between 2 and {DUMP_MAX_PHOTOS} photos"}), 400
     try:
         modified = [float(m) for m in json.loads(request.form.get("modified", "[]"))]
@@ -1355,7 +1396,7 @@ def group_photos_route():
 
     dump_dir = UPLOAD_DIR / uuid.uuid4().hex / "dump"
     taken: list = []
-    refs = save_photos(files, dump_dir, taken)
+    refs = _link_dump_photos(uploaded, dump_dir, taken) if uploaded else save_photos(files, dump_dir, taken)
     if len(refs) < 2:
         return jsonify({"error": "Need at least 2 readable photos"}), 400
 

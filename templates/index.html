@@ -191,6 +191,15 @@
       background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 600;
     }
 
+    .thumb-item.pending img { opacity: 0.55; }
+    .thumb-item.pending::after {  /* spinner while the photo uploads in the background */
+      content: ''; position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+      border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); border-top-color: #fff;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .upload-note { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
     .notes-wrap { margin-top: 14px; }
 
     textarea, .field-input {
@@ -585,6 +594,7 @@
     </div>
 
     <div id="thumb-strip"></div>
+    <div class="upload-note" id="upload-note" style="display:none"></div>
 
     <div class="notes-wrap">
       <textarea id="extra-notes" placeholder="Notes (optional): label tear top-right, new battery…"></textarea>
@@ -884,7 +894,11 @@
     formData.append('tested', document.getElementById('opt-tested').checked);
     for (const [g, game] of games.entries()) {
       if (game.refs) formData.append(`game_${g}_refs`, JSON.stringify(game.refs));  // already on the Mac
-      else for (const f of await Promise.all(game.files.map(uploadFile))) formData.append(`game_${g}_photos`, f);
+      else {
+        const refs = await uploadedRefs(game.files);  // usually already on the Mac by now
+        if (refs) formData.append(`game_${g}_refs`, JSON.stringify(refs));
+        else for (const f of await Promise.all(game.files.map(uploadFile))) formData.append(`game_${g}_photos`, f);
+      }
       formData.append(`game_${g}_notes`, game.notes);
     }
 
@@ -1236,18 +1250,67 @@
   // Phone photos are 3–15 MB each and the Mac scales them to 2400px anyway, so scale them here
   // first (~0.5–1 MB each) — uploads get ~10× smaller. Small thumbnails are made once per photo,
   // so the photo strip never re-decodes full-size photos.
-  const UPLOAD_MAX_PX = 2400, THUMB_PX = 240;
-  const photoPrep = new WeakMap();    // File → {ready, upload: Blob|null, thumb: url|null, taken: ''}
+  const UPLOAD_MAX_PX = 2400, THUMB_PX = 240, PREP_TIMEOUT_MS = 20000;
+  // File → {ready, uploaded (promises), upload: Blob|null, thumb: url|null, taken: '', ref: ''}
+  const photoPrep = new WeakMap();
   let prepChain = Promise.resolve();  // one photo at a time: decoding many 48 MP photos at once can crash mobile Safari
+  const UPLOAD_LANES = 2;             // photos sent to the Mac at the same time
+  let uploadLanes = Array.from({ length: UPLOAD_LANES }, () => Promise.resolve()), nextLane = 0;
+  const uploadCount = { done: 0, total: 0 };
 
   function prepPhoto(file) {
     let p = photoPrep.get(file);
     if (!p) {
-      p = { upload: null, thumb: null, taken: '' };
-      p.ready = prepChain = prepChain.then(() => shrinkPhoto(file, p)).catch(() => {});
+      p = { upload: null, thumb: null, taken: '', ref: '' };
+      // Time limit so one stuck photo can't hold up the rest — it's then sent as the original
+      p.ready = prepChain = prepChain
+        .then(() => Promise.race([shrinkPhoto(file, p), new Promise(r => setTimeout(r, PREP_TIMEOUT_MS))]))
+        .catch(() => {});
+      // As soon as it's shrunk, send it to the Mac in the background — Analyze then only sends refs
+      const lane = nextLane++ % UPLOAD_LANES;
+      uploadCount.total++;
+      p.uploaded = uploadLanes[lane] = Promise.all([p.ready, uploadLanes[lane]])
+        .then(() => preUpload(file, p)).catch(() => {})
+        .finally(() => {
+          p.done = true;
+          uploadCount.done++;
+          updateUploadNote();
+          document.querySelectorAll('.thumb-item.pending').forEach(el => {
+            if (el._file === file) el.classList.remove('pending');  // done (or failed — then it's sent with the analysis)
+          });
+        });
       photoPrep.set(file, p);
+      updateUploadNote();
     }
     return p;
+  }
+
+  async function preUpload(file, p) {
+    const form = new FormData();
+    // A shrunk HEIC loses its capture time (only JPEG times are read here) — send the original so
+    // the Mac can read it; HEIC is compact anyway
+    form.append('photo', p.taken || file.type === 'image/jpeg' ? await uploadFile(file) : file);
+    form.append('taken', p.taken);
+    const resp = await fetch('/photos', { method: 'POST', body: form });
+    if (!resp.ok) return;  // falls back to uploading the file with the analysis
+    const data = await resp.json();
+    p.ref = data.ref;
+    p.taken = p.taken || data.taken || '';
+  }
+
+  // Refs for photos that all made it to the Mac, else null (then the files are sent as before)
+  async function uploadedRefs(files) {
+    const preps = files.map(prepPhoto);
+    await Promise.all(preps.map(p => p.uploaded));
+    return preps.every(p => p.ref) ? preps.map(p => p.ref) : null;
+  }
+
+  function updateUploadNote() {
+    const note = document.getElementById('upload-note');
+    if (!note) return;
+    const left = uploadCount.total - uploadCount.done;
+    note.textContent = left ? `Uploading photos… ${uploadCount.done} of ${uploadCount.total}` : '';
+    note.style.display = left && selectedFiles.length ? '' : 'none';
   }
 
   async function shrinkPhoto(file, p) {
@@ -1255,20 +1318,22 @@
     const url = URL.createObjectURL(file);
     try {
       const img = new Image();
-      img.src = url;
-      await img.decode();  // fails for formats this browser can't show (e.g. HEIC in Chrome) → original is sent
+      // Not img.decode(): a browser can put that off indefinitely while the page is in the background.
+      // Fails for formats this browser can't show (e.g. HEIC in Chrome) → the original is sent.
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url; });
       // Browsers apply the EXIF rotation when drawing, so the output is upright
-      const draw = (max, quality) => {
-        const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const draw = (source, width, height, max, quality) => {
+        const scale = Math.min(1, max / Math.max(width, height));
         const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.naturalWidth * scale);
-        canvas.height = Math.round(img.naturalHeight * scale);
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+        return new Promise(resolve => canvas.toBlob(blob => resolve([blob, canvas]), 'image/jpeg', quality));
       };
-      const thumb = await draw(THUMB_PX, 0.8);
+      // Scale the full-size photo down once; the thumbnail comes from that smaller copy
+      const [small, canvas] = await draw(img, img.naturalWidth, img.naturalHeight, UPLOAD_MAX_PX, 0.88);
+      const [thumb] = await draw(canvas, canvas.width, canvas.height, THUMB_PX, 0.8);
       if (thumb) p.thumb = URL.createObjectURL(thumb);
-      const small = await draw(UPLOAD_MAX_PX, 0.92);
       if (small && small.size < file.size) p.upload = small;  // never send something bigger than the original
     } finally {
       URL.revokeObjectURL(url);
@@ -1414,7 +1479,8 @@
 
     selectedFiles.forEach((file, i) => {
       const item = document.createElement('div');
-      item.className = 'thumb-item' + (i === 0 ? ' primary' : '');
+      item.className = 'thumb-item' + (i === 0 ? ' primary' : '') + (prepPhoto(file).done ? '' : ' pending');
+      item._file = file;
 
       const img = document.createElement('img');
       showThumb(img, file);
@@ -1519,6 +1585,39 @@
             ...(g.extras || [])].filter(Boolean).join(', ');
   }
 
+  // ── Listing description: listing_template.html, filled in from the review fields ──
+  // (Claude only writes the condition notes and title, so every listing reads the same)
+  const LISTING_TEMPLATE = {{ listing_template|tojson }};
+  function fillTemplate(v) {
+    const region = (v.region || '').trim();
+    const details = [region !== 'Other' && region, v.year, v.variant]
+      .map(x => (x || '').trim()).filter(Boolean).join(', ');
+    const values = {
+      title: v.title, platform: v.platform, details: details ? ` (${details})` : '',
+      includes: v.includes || 'Game', condition: v.condition || 'See photos',
+      tested: document.getElementById('opt-tested').checked ? 'Tested and working' : 'Not tested',
+    };
+    return LISTING_TEMPLATE.replace(/\{(\w+)\}/g, (m, key) => key in values ? esc(values[key] || '') : m);
+  }
+
+  // Refill the description when a field it uses changes — unless the seller rewrote it by hand
+  const editDescription = document.getElementById('edit-description');
+  function refreshDescription() {
+    if (!currentData || editDescription.dataset.custom) return;
+    const val = id => document.getElementById(id).value;
+    editDescription.value = fillTemplate({
+      title: val('r-game-title'), platform: val('r-platform'), region: val('r-region'), year: val('r-year'),
+      variant: currentData.game_info.variant, includes: val('r-includes'), condition: val('r-condition-notes'),
+    });
+  }
+  ['r-game-title', 'r-platform', 'r-region', 'r-year', 'r-includes', 'r-condition-notes']
+    .forEach(id => document.getElementById(id).addEventListener('input', refreshDescription));
+  editDescription.addEventListener('input', () => { editDescription.dataset.custom = '1'; });
+  document.getElementById('opt-tested').addEventListener('change', () => {
+    refreshDescription();
+    document.querySelectorAll('.batch-card').forEach(card => card.refreshDescription && card.refreshDescription());
+  });
+
   function populateResults(data) {
     const { game_info, price_info, listing } = data;
 
@@ -1540,7 +1639,8 @@
 
     editTitle.value = listing.title;
     editTitle.dispatchEvent(new Event('input'));
-    document.getElementById('edit-description').value = listing.description;
+    delete editDescription.dataset.custom;
+    editDescription.value = listing.description;
     editPrice.value = (parseFloat(listing.suggested_price) || 0).toFixed(2);
 
     // Weight default: ~4oz loose cart/disc, ~12oz boxed
@@ -1551,6 +1651,7 @@
       b.classList.toggle('active', b.dataset.val === listing.condition);
     });
     selectedCondition = listing.condition;
+    refreshDescription();
   }
 
   // ── Description preview ────────────────
@@ -1709,9 +1810,10 @@
       // Shrunk photos carry their capture time in `taken`; a shrunk photo without one would
       // lose its place in the order, so that photo goes up as the original instead
       const preps = files.map(prepPhoto);
-      await Promise.all(preps.map(p => p.ready));
+      const refs = await uploadedRefs(files);
       const formData = new FormData();
-      for (const [i, f] of files.entries()) formData.append('photos', preps[i].taken ? await uploadFile(f) : f);
+      if (refs) formData.append('refs', JSON.stringify(refs));
+      else for (const [i, f] of files.entries()) formData.append('photos', preps[i].taken ? await uploadFile(f) : f);
       formData.append('taken', JSON.stringify(preps.map(p => p.taken)));
       formData.append('modified', JSON.stringify(files.map(f => f.lastModified || 0)));
 
@@ -1925,6 +2027,19 @@
         </div>
       `;
       batchCardsEl.appendChild(card);
+
+      // Description from the template, refilled when region/condition change (until edited by hand)
+      const desc = card.querySelector('[data-field="description"]');
+      const field = name => card.querySelector(`[data-field="${name}"]`).value;
+      card.refreshDescription = () => {
+        if (desc.dataset.custom) return;
+        desc.value = fillTemplate({ title: g.game_title, platform: g.platform, year: g.year, variant: g.variant,
+          includes: includesText(g), region: field('region'), condition: field('condition_notes') });
+      };
+      card.querySelectorAll('[data-field="region"], [data-field="condition_notes"]')
+        .forEach(el => el.addEventListener('input', card.refreshDescription));
+      desc.addEventListener('input', () => { desc.dataset.custom = '1'; });
+      card.refreshDescription();
     });
 
     batchCardsEl.querySelectorAll('.batch-card-summary').forEach(summary => {
