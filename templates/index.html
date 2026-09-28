@@ -413,7 +413,7 @@
     #price-reasoning, .batch-card-details .price-input-wrap + .char-count { text-align: left; }
 
     .condition-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-    @media (min-width: 600px) { .condition-grid { grid-template-columns: repeat(6, 1fr); } }
+    @media (min-width: 600px) { .condition-grid { grid-template-columns: repeat(5, 1fr); } }
     .condition-btn {
       min-height: 42px; padding: 6px 4px; border-radius: 10px; cursor: pointer;
       background: var(--surface2); border: 1px solid transparent; color: var(--text);
@@ -721,7 +721,6 @@
         <div class="condition-grid" id="condition-grid">
           <button class="condition-btn" data-val="NEW">New / Sealed</button>
           <button class="condition-btn" data-val="LIKE_NEW">Like New</button>
-          <button class="condition-btn" data-val="USED_EXCELLENT">Excellent</button>
           <button class="condition-btn" data-val="USED_VERY_GOOD">Very Good</button>
           <button class="condition-btn active" data-val="USED_GOOD">Good</button>
           <button class="condition-btn" data-val="USED_ACCEPTABLE">Acceptable</button>
@@ -832,7 +831,7 @@
   const money = (n) => `$${(parseFloat(n) || 0).toFixed(2)}`;
 
   const CONDITIONS = [
-    ['NEW', 'New / Sealed'], ['LIKE_NEW', 'Like New'], ['USED_EXCELLENT', 'Excellent'],
+    ['NEW', 'New / Sealed'], ['LIKE_NEW', 'Like New'],
     ['USED_VERY_GOOD', 'Very Good'], ['USED_GOOD', 'Good'], ['USED_ACCEPTABLE', 'Acceptable'],
   ];
 
