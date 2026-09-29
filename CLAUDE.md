@@ -164,6 +164,9 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 - Error 25021 (invalid condition for the category): Video Games only allows New, Like New, Very Good, Good,
   Acceptable — no "Excellent". An old `USED_EXCELLENT` is published as `USED_VERY_GOOD`
 - Error 25001 at the publish step is also transient — retried once
+- Error 25019 ("improper words… violation of eBay policy") at publish: a dollar amount in `conditionDescription`
+  (e.g. "$17.99 price sticker") — found with Trading API `VerifyAddFixedPriceItem`. `_strip_prices()` removes them;
+  the prompt tells Claude not to write prices
 - `packageType` causes error 25101 for video games — intentionally omitted, only weight is sent
 - SKUs are `RL-<SLUG>-<8 hex>` (letters, digits, hyphens; ≤50 chars)
 - Aspects with unknown values (`N/A`, `Unknown`) are omitted rather than sent

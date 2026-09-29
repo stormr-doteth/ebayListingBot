@@ -498,7 +498,8 @@ Identify exactly what it is and grade it:
 - Condition: be specific about visible wear. Only use NEW for factory-sealed items.
 - condition_notes goes straight into the listing, so write it for buyers: honest and specific,
   no mention of photos, nothing addressed to the seller, nothing salesy. Include seller's notes
-  that matter to a buyer (new battery, saves work, writing on label). "Light wear" style
+  that matter to a buyer (new battery, saves work, writing on label). Never write prices or dollar
+  amounts — "old price sticker", not "$17.99 price sticker" (eBay rejects them). "Light wear" style
   summaries only when you truly can't see more.
 - Authenticity: check label print quality, fonts, screws, board/disc details you can see. Say
   "uncertain" rather than guessing when the photos don't show enough.
@@ -874,6 +875,13 @@ def _ebay_error(prefix: str, resp: requests.Response) -> str:
         return f"{prefix}: HTTP {resp.status_code} {resp.text[:400]}"
 
 
+def _strip_prices(text: str) -> str:
+    """Remove dollar amounts: eBay rejects a condition description containing one (error 25019 /
+    Trading 240 "improper words"), e.g. "an old $17.99 price sticker" → "an old price sticker"."""
+    text = re.sub(r"\s*\(?\$\s?\d[\d,]*(?:\.\d{1,2})?\)?", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
 def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     """Create inventory item → offer → publish. Returns {success, listing_id | error}."""
     token = get_ebay_token()
@@ -920,7 +928,7 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
         "availability": {"shipToLocationAvailability": {"quantity": 1}},
     }
     if listing["condition"] != "NEW" and game_info.get("condition_notes"):
-        inventory_payload["conditionDescription"] = game_info["condition_notes"][:1000]
+        inventory_payload["conditionDescription"] = _strip_prices(game_info["condition_notes"])[:1000]
 
     inventory_url = f"{EBAY_BASE_URL}/sell/inventory/v1/inventory_item/{sku}"
     for attempt in range(2):
