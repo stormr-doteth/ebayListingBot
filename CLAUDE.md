@@ -211,7 +211,26 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 - [ ] eBay condition options are hard-coded (5 values, checked against the Metadata API Sep 2026 for Video Games); could be fetched per category
 - [ ] No "save as draft" (unpublished offer) option yet
 - [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
-- [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate
+- [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate. To add Switch: add
+  `"nintendo-switch": "Nintendo Switch"` to `CONSOLES` in the scraper's `scrape_prices.py`, run
+  `python scrape_prices.py nintendo-switch` (rebuilds the master CSV), copy it here, and add
+  `"nintendo switch"` / `"switch"` to `PLATFORM_TO_CSV`
+- [ ] Analysis speed: Claude dominates (~25s per game, `ANALYZE_WORKERS=3` at a time); photo uploads take
+  ~0.1–0.3s each. Next step: try `ANALYZE_WORKERS=6` in `.env` (drop to 5 if games fail from plan rate limits)
+- [ ] Sonnet 5.5: `CLAUDE_MODEL=sonnet` resolved to `claude-sonnet-5` with Claude Code 2.1.273 (Homebrew cask,
+  Oct 2026). Upgrade (`brew upgrade --cask claude-code`), then check what `sonnet` resolves to
+  (`claude -p "OK" --model sonnet --output-format json` → `modelUsage`)
+- [ ] Every failed publish leaves an unpublished eBay offer + inventory item (SKU `RL-…`). They're invisible
+  to buyers but pile up; a cleanup (delete offers with status UNPUBLISHED) would tidy the account
+- [ ] Only one machine should run the app at a time — two copies would both run the sale sync.
+  `inventory.db` (gitignored) holds every item's marketplace links; copy it along with `.env`,
+  `ebay_tokens.json` and `ebay_config.json` when moving to another computer
+
+## Setting Up On Another Computer
+Secrets and state are gitignored — copy these from the old machine (privately, never via git):
+`.env`, `ebay_tokens.json`, `ebay_config.json`, `inventory.db` (and `mercari_profile/` to keep the Mercari login).
+Then `python3 -m venv venv && ./venv/bin/pip install -r requirements.txt`, make sure `claude` is installed and
+logged in, and stop the app on the old machine before starting it on the new one.
 
 ## Context About the Developer
 - Storm lists a retro game collection on eBay — mostly N64, SNES, PS1/PS2 era, some DS/3DS/Wii
