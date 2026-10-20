@@ -113,6 +113,16 @@ EBAY_TOKEN_LEGACY = os.environ.get("EBAY_TOKEN", "")  # static token fallback
 # USED_EXCELLENT (3000) is NOT allowed there and fails publishing with error 25021.
 CONDITIONS = ["NEW", "LIKE_NEW", "USED_VERY_GOOD", "USED_GOOD", "USED_ACCEPTABLE"]
 
+# Controllers (the Controllers tab) go in Video Game Accessories › Controllers & Attachments.
+# That category uses the general conditions: 1000 New, 3000 Used (Inventory API name: USED_EXCELLENT —
+# there is no "USED" enum) and 7000 For parts or not working.
+# Not yet confirmed with get_item_condition_policies — if publishing fails with 25021, check it there.
+CONTROLLER_CATEGORY_ID = "117042"
+CATEGORY_CONDITIONS = {
+    EBAY_CATEGORY_ID: CONDITIONS,
+    CONTROLLER_CATEGORY_ID: ["NEW", "USED_EXCELLENT", "FOR_PARTS_OR_NOT_WORKING"],
+}
+
 
 def _load_secret_key() -> str:
     """Stable session key across restarts (so the PIN login survives a restart)."""
@@ -841,8 +851,26 @@ def upload_photos(photo_refs: list[str], token: str) -> tuple[list[str], str]:
 REGION_CODES = {"USA": "NTSC-U/C (US/Canada)", "PAL": "PAL", "Japan": "NTSC-J (Japan)"}
 
 
+def _controller_aspects(info: dict) -> dict:
+    """Item specifics for Controllers & Attachments (from the Controllers tab)."""
+    raw = {
+        "Brand": info.get("brand"),
+        "Platform": info.get("platform"),
+        "Compatible Platform": info.get("platform"),
+        "Type": "Gamepad",
+        "Connectivity": info.get("connectivity"),
+        "Color": info.get("color"),
+        "Model": info.get("model"),
+        "MPN": info.get("mpn"),
+    }
+    junk = {"", "unknown", "n/a", "na", "none"}
+    return {k: [str(v)[:65]] for k, v in raw.items() if v and str(v).strip().lower() not in junk}
+
+
 def _aspects(game_info: dict) -> dict:
     """eBay item specifics. Unknown values are left out rather than sent as junk."""
+    if game_info.get("item_type") == "controller":
+        return _controller_aspects(game_info)
     includes = [label for flag, label in (("has_game", "Game"), ("has_manual", "Manual"), ("has_box", "Box"))
                 if game_info.get(flag, flag == "has_game")]
     raw = {
@@ -887,9 +915,12 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
     token = get_ebay_token()
     if not token:
         return {"success": False, "error": "No eBay token configured. Connect eBay from the app."}
-    if listing.get("condition") == "USED_EXCELLENT":  # older results/pages offered it; eBay rejects it here
-        listing = {**listing, "condition": "USED_VERY_GOOD"}
-    if listing.get("condition") not in CONDITIONS:
+    category_id = str(listing.get("category_id") or EBAY_CATEGORY_ID)
+    if category_id not in CATEGORY_CONDITIONS:
+        return {"success": False, "error": f"Unsupported eBay category {category_id!r}"}
+    if category_id == EBAY_CATEGORY_ID and listing.get("condition") == "USED_EXCELLENT":
+        listing = {**listing, "condition": "USED_VERY_GOOD"}  # older results/pages offered it; Video Games rejects it
+    if listing.get("condition") not in CATEGORY_CONDITIONS[category_id]:
         return {"success": False, "error": f"Invalid condition {listing.get('condition')!r}"}
     try:
         price = round(float(listing["suggested_price"]), 2)
@@ -948,7 +979,7 @@ def post_to_ebay(listing: dict, game_info: dict, photo_refs: list[str]) -> dict:
         "marketplaceId": "EBAY_US",
         "format": "FIXED_PRICE",
         "availableQuantity": 1,
-        "categoryId": EBAY_CATEGORY_ID,
+        "categoryId": category_id,
         "merchantLocationKey": EBAY_LOCATION_KEY,
         "listingDescription": listing.get("description", ""),
         "pricingSummary": {"price": {"value": f"{price:.2f}", "currency": "USD"}},
@@ -1056,6 +1087,10 @@ def publish_item(listing: dict, game_info: dict, photos: list[str], markets: lis
                 crosslist.set_item_data_field(item_id, "image_urls", r["image_urls"])
             out["results"]["ebay"] = {**{k: v for k, v in r.items() if k != "image_urls"},
                                       "status": "listed" if r["success"] else "failed"}
+        elif market == "mercari" and game_info.get("item_type") == "controller":
+            # The Mercari worker always picks the Video Games category — controllers would land in the wrong one
+            out["results"]["mercari"] = {"success": False, "status": "failed",
+                                         "error": "Controllers are eBay-only for now"}
         elif market == "mercari":
             paths = [p for p in (resolve_photo(ref) for ref in photos) if p]
             image_urls = crosslist.item_data(item_id).get("image_urls") or []
