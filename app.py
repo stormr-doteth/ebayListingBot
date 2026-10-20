@@ -9,7 +9,6 @@ import csv
 import hmac
 import json
 import time
-import queue
 import base64
 import difflib
 import functools
@@ -20,7 +19,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
 from xml.sax.saxutils import escape as xml_escape
@@ -143,7 +142,7 @@ def require_pin(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         if APP_PIN and not session.get("authenticated"):
-            if request.method == "POST" or request.path == "/ebay/status":
+            if request.method == "POST" or request.path == "/ebay/status" or request.path.startswith("/jobs/"):
                 return jsonify({"error": "Not logged in — reload the page"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
@@ -166,6 +165,7 @@ PLATFORM_TO_CSV = {
     "gamecube": "GameCube", "nintendo gamecube": "GameCube",
     "nintendo ds": "Nintendo DS", "ds": "Nintendo DS",
     "nintendo 3ds": "Nintendo 3DS", "3ds": "Nintendo 3DS",
+    "nintendo switch": "Nintendo Switch", "switch": "Nintendo Switch",
     "wii": "Wii", "nintendo wii": "Wii",
     "playstation": "Playstation", "ps1": "Playstation", "psx": "Playstation", "playstation 1": "Playstation",
     "sony playstation": "Playstation",
@@ -1353,10 +1353,6 @@ def load_listing_template() -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
 
 
-def _sse(event: dict) -> str:
-    return f"data: {json.dumps(event)}\n\n"
-
-
 @app.route("/photos", methods=["POST"])
 @require_pin
 def upload_photo():
@@ -1395,7 +1391,7 @@ def group_photos_route():
 
     Form: photos (files) or refs (JSON list of photos already sent to /photos), taken (JSON list of each photo's EXIF capture time read by the browser —
     photos it shrank before upload have lost their EXIF), modified (JSON list of each file's
-    lastModified ms, a fallback when a photo has no capture time at all). Returns {groups: [{item, photos: [{ref, index}]}]} where `index`
+    lastModified ms, a fallback when a photo has no capture time at all). Returns {job_id}; the job's result event carries {groups: [{item, photos: [{ref, index}]}]} where `index`
     is the file's position in the upload, so the browser can show its own thumbnails."""
     files = request.files.getlist("photos")
     try:
@@ -1438,15 +1434,25 @@ def group_photos_route():
         (ai_dir / f"tmp_{old}.jpg").rename(ai_dir / f"photo_{new}.jpg")
     ordered = [{"ref": refs[new], "index": taken[old][1]} for new, old in enumerate(order)]
 
-    usage: dict = {}
-    try:
-        groups = group_photos(dump_dir, len(refs), usage)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    print(f"[dump] {len(refs)} photos → {len(groups)} items, "
-          f"{sum(usage.get(k, 0) for k in ('input', 'cache_write', 'cache_read', 'output')):,} tokens, "
-          f"{usage.get('seconds')}s")
-    return jsonify({"groups": [{"item": g["item"], "photos": [ordered[n - 1] for n in g["photos"]]} for g in groups]})
+    # The Claude call runs as a job, so the result survives the phone sleeping mid-sort
+    job_id = _new_job()
+
+    def work():
+        usage: dict = {}
+        try:
+            groups = group_photos(dump_dir, len(refs), usage)
+        except Exception as e:
+            _job_event(job_id, {"type": "error", "error": str(e)})
+        else:
+            print(f"[dump] {len(refs)} photos → {len(groups)} items, "
+                  f"{sum(usage.get(k, 0) for k in ('input', 'cache_write', 'cache_read', 'output')):,} tokens, "
+                  f"{usage.get('seconds')}s")
+            _job_event(job_id, {"type": "result", "data": {"groups": [
+                {"item": g["item"], "photos": [ordered[n - 1] for n in g["photos"]]} for g in groups]}})
+        _job_event(job_id, {"type": "done"})
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
 
 def _link_photos(refs: list[str], game_dir: Path) -> list[str]:
@@ -1467,7 +1473,8 @@ def _link_photos(refs: list[str], game_dir: Path) -> list[str]:
 @app.route("/analyze-batch", methods=["POST"])
 @require_pin
 def analyze_batch():
-    """Analyze one or more games, streaming progress as Server-Sent Events.
+    """Analyze one or more games as a background job. Returns {job_id}; progress / result / error /
+    done events are read from /jobs/<job_id>.
 
     Form fields: game_count, game_{n}_photos (files) OR game_{n}_refs (JSON list of photo refs
     already uploaded by /group-photos), game_{n}_notes, tested.
@@ -1496,40 +1503,74 @@ def analyze_batch():
         games.append({"dir": game_dir, "refs": refs, "notes": request.form.get(f"game_{g}_notes", "")[:2000],
                       "error": err})
 
-    def generate():
-        events: queue.Queue = queue.Queue()
+    # Games run as a job: they keep going, and keep their results, even if the phone sleeps and
+    # stops polling. The browser follows /jobs/<id> and picks up where it left off.
+    job_id = _new_job()
 
-        def work(g: int, game: dict):
-            if game["error"]:
-                events.put({"type": "error", "game": g, "error": game["error"]})
-                return
-            try:
-                data = analyze_game(game["dir"], game["refs"], game["notes"], tested,
-                                    progress=lambda step: events.put({"type": "progress", "game": g, "step": step}))
-                events.put({"type": "result", "game": g, "data": data})
-            except Exception as e:
-                print(f"[analyze] Game {g} failed: {e}")
-                events.put({"type": "error", "game": g, "error": str(e)})
+    def work(g: int, game: dict):
+        if game["error"]:
+            _job_event(job_id, {"type": "error", "game": g, "error": game["error"]})
+            return
+        try:
+            data = analyze_game(game["dir"], game["refs"], game["notes"], tested,
+                                progress=lambda step: _job_event(job_id, {"type": "progress", "game": g, "step": step}))
+            _job_event(job_id, {"type": "result", "game": g, "data": data})
+        except Exception as e:
+            print(f"[analyze] Game {g} failed: {e}")
+            _job_event(job_id, {"type": "error", "game": g, "error": str(e)})
 
-        pool = ThreadPoolExecutor(max_workers=ANALYZE_WORKERS)
-        for g, game in enumerate(games):
-            pool.submit(work, g, game)
-        pool.shutdown(wait=False)
+    pool = ThreadPoolExecutor(max_workers=ANALYZE_WORKERS)
+    futures = [pool.submit(work, g, game) for g, game in enumerate(games)]
+    pool.shutdown(wait=False)
 
-        remaining = len(games)
-        while remaining:
-            try:
-                event = events.get(timeout=15)
-            except queue.Empty:
-                yield ": keepalive\n\n"  # stops phones/proxies from dropping a quiet connection
-                continue
-            if event["type"] in ("result", "error"):
-                remaining -= 1
-            yield _sse(event)
-        yield _sse({"type": "done"})
+    def finish():
+        wait_futures(futures)
+        _job_event(job_id, {"type": "done"})
+    threading.Thread(target=finish, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ─────────────────────────────────────────
+#  Background jobs (analysis, photo sorting)
+# ─────────────────────────────────────────
+# A job is a list of events the browser polls with /jobs/<id>?from=N. Nothing is lost when a
+# phone sleeps mid-analysis: the work carries on here and the page catches up when it wakes.
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
+JOB_TTL = 6 * 3600  # forget jobs after 6 hours
+
+
+def _new_job() -> str:
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    with JOBS_LOCK:
+        for old in [k for k, j in JOBS.items() if now - j["created"] > JOB_TTL]:
+            del JOBS[old]
+        JOBS[job_id] = {"events": [], "done": False, "created": now}
+    return job_id
+
+
+def _job_event(job_id: str, event: dict):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job:
+            job["events"].append(event)
+            job["done"] = job["done"] or event["type"] == "done"
+
+
+@app.route("/jobs/<job_id>")
+@require_pin
+def job_events(job_id):
+    """A job's events from index `from` on, and whether it's finished."""
+    try:
+        start = max(0, int(request.args.get("from", 0)))
+    except ValueError:
+        start = 0
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "The Mac lost track of this job (was the app restarted?) — please run it again"}), 404
+        return jsonify({"events": job["events"][start:], "done": job["done"]})
 
 
 @app.route("/publish", methods=["POST"])

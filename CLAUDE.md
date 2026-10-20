@@ -13,7 +13,7 @@ ebayListingBot/
 │   ├── index.html                   # Single-page frontend (light/dark)
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
 ├── listing_template.html            # Listing description template ({title}, {condition}, …) — edit wording here
-├── pricecharting_master_price.csv   # Local price guide (~28k games, 17 consoles, from the PriceCharting scraper)
+├── pricecharting_master_price.csv   # Local price guide (~33k games, 18 consoles incl. Switch, from the PriceCharting scraper)
 ├── setup_policies.py                # One-time: create eBay business policies
 ├── setup_shipping_policy.py         # One-time: create calculated-shipping policy
 ├── requirements.txt
@@ -70,7 +70,7 @@ CROSSLIST_AUTO_END=true                # end the other listing automatically whe
 `GEMINI_API_KEY` / `CEREBRAS_API_KEY` are no longer used.
 
 ## Claude Pipeline (app.py)
-Per game, run in a thread pool and streamed to the browser as SSE (`/analyze-batch`):
+Per game, run in a thread pool as a background job (`/analyze-batch` → `job_id`; the browser polls `/jobs/<id>`):
 1. **`save_photos()`** — every upload is re-encoded to JPEG (HEIC converted, rotation fixed, EXIF/GPS stripped), max 2400px for eBay, plus a 1568px copy in `ai/` for Claude.
 2. **`analyze_photos()`** — ONE `claude -p` call with the photos attached via `@photo_N.jpg` mentions (the CLI only attaches ~3, so extras go on a numbered contact sheet and Claude may `Read` a full-size photo). Returns `GAME_INFO_SCHEMA`: identification (title, platform, variant, region, MPN, completeness), condition, authenticity, confidence, flags, buyer-facing `condition_notes`, **plus the eBay title** and a rough `estimated_loose/cib` fallback. Claude does NOT write the description.
 3. **`price_listing()`** — pricing is deterministic, not Claude's call: PriceCharting API rows if `PRICECHARTING_API_KEY` is set, else the local CSV. `pick_price_row()` chooses the row for the exact variant (uses the variant field, listing title and MPN suffix like `GH`). Game + box + manual → **CIB** price; anything less → **loose**. Not in the guide → Claude's estimate, flagged.
@@ -130,9 +130,10 @@ Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more ph
 |-------|--------|-------------|
 | `/` | GET | Main UI |
 | `/login` | GET/POST | PIN login (rate-limited: 5 tries / 5 min per IP) |
-| `/analyze-batch` | POST | FormData `game_count`, `game_{n}_photos`, `game_{n}_notes`, `tested` → SSE `progress` / `result` / `error` / `done`. Used for single games too (count = 1). |
+| `/analyze-batch` | POST | FormData `game_count`, `game_{n}_photos` or `game_{n}_refs`, `game_{n}_notes`, `tested` → `{job_id}`; events `progress` / `result` / `error` / `done` come from `/jobs/<id>`. Used for single games too (count = 1). |
+| `/jobs/<id>` | GET | `?from=N` → `{events: [...from N on], done}`. Jobs live in memory (lost on restart → 404), forgotten after 6 h |
 | `/photos` | POST | One photo (`photo`, `taken`) uploaded in the background → `{ref, taken}` |
-| `/group-photos` | POST | Photo dump: `refs` (from `/photos`) or `photos` files, + `taken` / `modified` JSON lists → `{groups: [{item, photos: [{ref, index}]}]}` |
+| `/group-photos` | POST | Photo dump: `refs` (from `/photos`) or `photos` files, + `taken` / `modified` JSON lists → `{job_id}`; its `result` event has `{groups: [{item, photos: [{ref, index}]}]}` |
 | `/publish` | POST | JSON `{listing, game_info, photos, markets: ["ebay","mercari"], item_id?}` → `{success, item_id, results: {market: {status, url, error}}, listing_id, url}` |
 | `/publish-batch` | POST | JSON `{games: [{…, item_id?}], markets}` → `{results: [...]}` |
 | `/items/status` | POST | `{ids}` → items with per-market listing status (polled while Mercari works) |
@@ -182,7 +183,14 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
   It refills when those fields change, until the seller edits the description by hand.
 - Mobile-first: phone camera → listing. All photos are analyzed; first photo leads the eBay gallery.
 - Option: "Tested & working" (controls whether the listing may say Tested) — remembered in localStorage.
-- Single game and batch both stream progress from `/analyze-batch`.
+- **Phone sleep**: analysis and photo sorting are background jobs on the Mac (`JOBS`, `_new_job()` / `_job_event()`),
+  so they finish and keep their results even if the phone locks. `followJob()` polls `/jobs/<id>?from=N` every
+  second, retries through network drops for ~10 min, and resumes instantly when the page becomes visible again.
+  Photos whose background upload failed are retried once before Analyze/Sort.
+- **Keep awake**: `keepAwake` keeps the screen on while a job runs — the Wake Lock API needs HTTPS, so on the
+  home-network http address it plays a tiny silent looping inline video instead (must start inside the tap).
+  Not verified on a real iPhone yet.
+- Single game and batch both use `/analyze-batch` (via `streamAnalyze()` → `followJob()`).
 - "AI check" panel per game: ID confidence, authenticity, variant, flags, the PriceCharting row used (linked), alternative rows with one-tap prices, token usage.
 - Everything editable before publishing (title, description, condition, weight, price, item specifics). Published batch cards link to the live listing and can't be published twice.
 - All model text is HTML-escaped (`esc()`) before rendering.
@@ -211,10 +219,9 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 - [ ] eBay condition options are hard-coded (5 values, checked against the Metadata API Sep 2026 for Video Games); could be fetched per category
 - [ ] No "save as draft" (unpublished offer) option yet
 - [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
-- [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate. To add Switch: add
-  `"nintendo-switch": "Nintendo Switch"` to `CONSOLES` in the scraper's `scrape_prices.py`, run
-  `python scrape_prices.py nintendo-switch` (rebuilds the master CSV), copy it here, and add
-  `"nintendo switch"` / `"switch"` to `PLATFORM_TO_CSV`
+- [ ] CSV has no PS5/Xbox Series/Switch 2 — those fall back to Claude's estimate. To add a console: add its
+  PriceCharting slug to `CONSOLES` in the scraper's `scrape_prices.py`, run `python scrape_prices.py <slug>`
+  (rebuilds the master CSV), copy it here, and map its names in `PLATFORM_TO_CSV`. Switch was added this way (Oct 2026)
 - [ ] Analysis speed: Claude dominates (~25s per game, `ANALYZE_WORKERS=3` at a time); photo uploads take
   ~0.1–0.3s each. Next step: try `ANALYZE_WORKERS=6` in `.env` (drop to 5 if games fail from plan rate limits)
 - [ ] Sonnet 5.5: `CLAUDE_MODEL=sonnet` resolved to `claude-sonnet-5` with Claude Code 2.1.273 (Homebrew cask,
