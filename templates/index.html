@@ -904,6 +904,11 @@
 
   // POST games to /analyze-batch and call onEvent for each streamed event
   async function streamAnalyze(games, onEvent) {
+    keepAwake.start();  // here, while still inside the tap — iPhones only start video from a tap
+    try { await analyzeJob(games, onEvent); } finally { keepAwake.stop(); }
+  }
+
+  async function analyzeJob(games, onEvent) {
     const formData = new FormData();
     formData.append('game_count', games.length);
     formData.append('tested', document.getElementById('opt-tested').checked);
@@ -920,25 +925,88 @@
     const resp = await fetch('/analyze-batch', { method: 'POST', body: formData });
     if (resp.status === 401) { location.reload(); return; }
     if (resp.status === 413) throw new Error('Photos too large — try fewer at once');
-    if (!resp.ok || !resp.body) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error || `Server error (${resp.status})`);
-    }
+    const start = await resp.json().catch(() => ({}));
+    if (!resp.ok || !start.job_id) throw new Error(start.error || `Server error (${resp.status})`);
+    await followJob(start.job_id, onEvent);
+  }
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();  // keep incomplete line
-      for (const line of lines) {
-        if (line.startsWith('data: ')) onEvent(JSON.parse(line.slice(6)));
+  // ── Background jobs ────────────────────
+  // Analysis and sorting run as jobs on the Mac and keep their results there. This polls a job until
+  // it's done, passing each new event to onEvent. If the phone sleeps, polling just pauses; on waking
+  // it carries on from the last event it saw, so nothing has to be redone.
+  async function followJob(jobId, onEvent) {
+    keepAwake.start();
+    let seen = 0, failures = 0;
+    try {
+      while (true) {
+        let data = null;
+        try {
+          const resp = await fetch(`/jobs/${jobId}?from=${seen}`, { cache: 'no-store' });
+          if (resp.status === 401) { location.reload(); return; }
+          data = await resp.json();
+          if (resp.status === 404) throw Object.assign(new Error(data.error), { fatal: true });
+          failures = 0;
+        } catch (err) {
+          if (err.fatal) throw err;
+          // Network blip, or the phone just woke up — keep trying for ~10 minutes
+          if (++failures > 300) throw new Error('Lost connection to the Mac — check it is on and try again');
+        }
+        if (data) {
+          for (const evt of data.events) { seen++; onEvent(evt); }
+          if (data.done) return;
+        }
+        await pause(failures ? 2000 : 1000);
       }
+    } finally {
+      keepAwake.stop();
     }
   }
+
+  // Wait, but wake up straight away when the page comes back into view (phone unlocked)
+  function pause(ms) {
+    return new Promise(resolve => {
+      const done = () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onShow); resolve(); };
+      const onShow = () => { if (!document.hidden) done(); };
+      const timer = setTimeout(done, ms);
+      document.addEventListener('visibilitychange', onShow);
+    });
+  }
+
+  // ── Keep the screen on while the Mac works ──
+  // The Wake Lock API only works over HTTPS, and this app is plain http on the home network, so the
+  // fallback is the old trick: a tiny silent looping video keeps iPhones from dimming and locking.
+  // Must first be started from a tap (Analyze / Sort), which is where it's called from.
+  const keepAwake = (() => {
+    let users = 0, lock = null, video = null;
+    const start = () => {
+      if (users++) return;
+      if (navigator.wakeLock && window.isSecureContext) {
+        navigator.wakeLock.request('screen').then(l => { lock = l; }).catch(() => {});
+        return;
+      }
+      if (!video) {
+        video = document.createElement('video');
+        video.setAttribute('playsinline', '');
+        video.setAttribute('muted', '');
+        video.muted = true;
+        video.loop = true;
+        video.src = 'data:video/mp4;base64,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X21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0xIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAADmWIhAW///8PRQABT3+AARggBwEYIAcBGCAHARggBwEYIAcBGCAHARggBwEYIAcAAAAGQZo4CvqAARggBwEYIAcBGCAHARggBwEYIAcBGCAHARggBwEYIAc=';
+        video.style.cssText = 'position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.05;pointer-events:none';
+        // Browsers pause it on their own (e.g. when the page is hidden) — restart it while still needed
+        const resume = () => { if (users && video.paused && !document.hidden) video.play().catch(() => {}); };
+        video.addEventListener('pause', () => setTimeout(resume, 500));
+        document.addEventListener('visibilitychange', resume);
+        document.body.appendChild(video);
+      }
+      video.play().catch(() => {});
+    };
+    const stop = () => {
+      if (users === 0 || --users) return;
+      if (lock) { lock.release().catch(() => {}); lock = null; }
+      if (video) video.pause();
+    };
+    return { start, stop };
+  })();
 
   async function postJson(url, payload) {
     const resp = await fetch(url, {
@@ -1317,6 +1385,8 @@
   async function uploadedRefs(files) {
     const preps = files.map(prepPhoto);
     await Promise.all(preps.map(p => p.uploaded));
+    // A photo whose upload failed (e.g. the phone locked mid-upload) gets one more try now
+    await Promise.all(files.map((f, i) => preps[i].ref ? null : preUpload(f, preps[i]).catch(() => {})));
     return preps.every(p => p.ref) ? preps.map(p => p.ref) : null;
   }
 
@@ -1820,6 +1890,7 @@
 
     sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = true;
     sortDumpBtn.textContent = `Sorting ${files.length} photos… (~30–60s)`;
+    keepAwake.start();  // inside the tap — see keepAwake
 
     try {
       // Shrunk photos carry their capture time in `taken`; a shrunk photo without one would
@@ -1835,8 +1906,14 @@
       const resp = await fetch('/group-photos', { method: 'POST', body: formData });
       if (resp.status === 401) { location.reload(); return; }
       if (resp.status === 413) throw new Error('Too much data at once — try fewer photos per dump');
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error || `Server error (${resp.status})`);
+      const start = await resp.json().catch(() => ({}));
+      if (!resp.ok || !start.job_id) throw new Error(start.error || `Server error (${resp.status})`);
+      let data = null, jobError = '';
+      await followJob(start.job_id, evt => {
+        if (evt.type === 'result') data = evt.data;
+        if (evt.type === 'error') jobError = evt.error;
+      });
+      if (!data) throw new Error(jobError || 'Sorting failed');
 
       const notes = document.getElementById('extra-notes').value;
       data.groups.forEach(g => batchQueue.push(makeGroup(g.photos.map(p => files[p.index]), {
@@ -1851,6 +1928,7 @@
       sortDumpBtn.disabled = analyzeBtn.disabled = addBatchBtn.disabled = false;
     } finally {
       sortDumpBtn.textContent = 'Sort photo dump';
+      keepAwake.stop();
     }
   });
 
