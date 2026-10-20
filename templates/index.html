@@ -134,6 +134,14 @@
     }
     .ebay-banner a { color: inherit; }
 
+    /* Games / Controllers tabs */
+    .tabs { display: flex; gap: 4px; margin-top: 16px; padding: 4px; border-radius: 12px; background: var(--surface2); }
+    .tab {
+      flex: 1; height: 38px; border: none; border-radius: 9px; background: transparent; color: var(--muted);
+      font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    .tab.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
     /* ── Sections ── */
     .upload-section, .listing-section, .game-card {
       background: var(--surface);
@@ -578,8 +586,15 @@
     </div>
     <div class="ebay-banner" id="ebay-banner"></div>
     <div class="ebay-banner" id="attention-banner"></div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" role="tab" data-tab="games" aria-selected="true">Games</button>
+      <button class="tab" role="tab" data-tab="controllers" aria-selected="false">Controllers</button>
+    </div>
   </header>
 
+  {% include 'controllers.html' %}
+
+  <div id="tab-games">
   <!-- Upload section -->
   <div class="upload-section">
     <div class="section-label"><span class="step">1</span> Add photos</div>
@@ -760,6 +775,7 @@
       <span class="reset-link" id="reset-btn">← List another game</span>
     </div>
   </div>
+  </div><!-- /tab-games -->
 </div>
 
 <!-- Description preview modal -->
