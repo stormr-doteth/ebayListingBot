@@ -266,6 +266,7 @@ MERCARI_HOME = "https://www.mercari.com"
 MERCARI_CONDITIONS = {
     "NEW": "New", "LIKE_NEW": "Like new", "USED_EXCELLENT": "Like new",
     "USED_VERY_GOOD": "Good", "USED_GOOD": "Good", "USED_ACCEPTABLE": "Fair",
+    "FOR_PARTS_OR_NOT_WORKING": "Poor",
 }
 
 # Platform → brand buyers filter by on Mercari

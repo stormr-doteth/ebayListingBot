@@ -10,7 +10,8 @@ ebayListingBot/
 ├── app.py                           # Flask backend — all routes, Claude pipeline, eBay publishing, sale sync
 ├── crosslist.py                     # Inventory DB (SQLite) + Mercari publisher (Playwright worker)
 ├── templates/
-│   ├── index.html                   # Single-page frontend (light/dark)
+│   ├── index.html                   # Single-page frontend (light/dark), Games / Controllers tabs
+│   ├── controllers.html             # Controllers tab (included by index.html): 360 controller tester → listing
 │   └── login.html                   # PIN login (only used when APP_PIN is set)
 ├── listing_template.html            # Listing description template ({title}, {condition}, …) — edit wording here
 ├── pricecharting_master_price.csv   # Local price guide (~28k games, 17 consoles, from the PriceCharting scraper)
@@ -88,6 +89,25 @@ The UI shows which PriceCharting row was used (linked) and the other candidate r
 Claude CLI safety: `--tools Read` only, and Read is *not* pre-approved so it only works inside the game's photo folder; `--setting-sources ""` ignores personal settings/hooks; `--no-session-persistence` keeps these runs out of session history. Photo text is treated as data (system prompt says so).
 
 Typical cost: ~20–40k tokens and ~15–25s per game with 2–4 photos (more photos → more). Token usage is logged per game and shown in the AI check panel. Games run 3 at a time.
+
+## Controllers tab (templates/controllers.html)
+Tests a used Xbox 360 controller in the browser and turns the result into an eBay listing — no Claude call.
+- **Gamepad API**, read every animation frame while the tab is open. Browsers only expose controllers on a
+  secure page, so it works at `http://localhost:8080` on the Mac (Chrome), not from the phone over http.
+  A banner says so when `isSecureContext` is false.
+- **Tests**: drift (max distance from center over 3 hands-off seconds), snapback (4 ms sampling: time from
+  leaving the edge to < 15% of travel, then the median resting point over 150 ms; 8 directions per stick),
+  range (36 angular bins), 14 buttons (+ Guide, unscored), trigger travel, rumble (`vibrationActuator`).
+- **Score /100**: drift 25, snapback 10, range 10, buttons 30, triggers 10, cosmetic 15, rumble −4/−8.
+  Drift or a snapback that stops past the 24% XInput deadzone, a dead button or dead rumble → For parts.
+- **Price**: `TYPES` base prices (tested, clean, sold listings Oct 2026) × tier (Excellent 1 / Good 0.82 /
+  Fair 0.62), battery pack +$4, missing cover −$3, rounded to .99. Title/description/condition notes are built
+  from the measurements and stop updating once the seller edits them ("Refill from test results" undoes that).
+- **Publish**: the normal `/publish` with `listing.category_id = "117042"` (Controllers & Attachments) and
+  `game_info.item_type = "controller"` → `_controller_aspects()`. Conditions there are `CATEGORY_CONDITIONS`:
+  NEW, USED_EXCELLENT (= 3000 "Used"; the Inventory API has no `USED` enum), FOR_PARTS_OR_NOT_WORKING.
+  **Not yet confirmed with `get_item_condition_policies` — check it if the first publish fails with 25021.**
+- eBay only: `publish_item()` refuses Mercari for controllers (the worker always picks the Video Games category).
 
 ## Cross-listing (crosslist.py + app.py)
 - **Inventory** (`inventory.db`): `items` (one per physical game, status active/sold) and `listings` (one per item ×
@@ -210,6 +230,9 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
 - [ ] Poshmark / Etsy / Depop adapters
 - [ ] eBay condition options are hard-coded (5 values, checked against the Metadata API Sep 2026 for Video Games); could be fetched per category
 - [ ] No "save as draft" (unpublished offer) option yet
+- [ ] Controllers: confirm 117042's conditions with the Metadata API; snapback thresholds (60/100 ms) are
+  first guesses — calibrate against a known-tight controller; N64 controllers (stick wear, via a Raphnet adapter)
+  and Mercari's controller category are not done
 - [ ] Price CSV is a snapshot from the PriceCharting scraper (`~/PriceChartingScraper/pricecharting-scraper`, Sep 27 2026) — copy a fresh `pricecharting_master_price.csv` over it to refresh. Its Console names must match `PLATFORM_TO_CSV`.
 - [ ] CSV has no Switch/PS5/Xbox Series — those fall back to Claude's estimate. To add Switch: add
   `"nintendo-switch": "Nintendo Switch"` to `CONSOLES` in the scraper's `scrape_prices.py`, run
