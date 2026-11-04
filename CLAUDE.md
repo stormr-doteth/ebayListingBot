@@ -31,7 +31,7 @@ ebayListingBot/
 - **Backend**: Python 3.13, Flask 3.x (runs in `venv/`), Pillow + pillow-heif for photos
 - **AI**: the local **Claude Code CLI** in headless mode (`claude -p`). It runs on Storm's Claude plan login — no API key, no per-call billing. `run_claude()` removes `ANTHROPIC_API_KEY` from the subprocess env so it can never silently bill an API key.
 - **Pricing**: PriceCharting loose/CIB price — local `pricecharting_master_price.csv` snapshot, or the live PriceCharting API when `PRICECHARTING_API_KEY` is set. No web research.
-- **Listing**: eBay Inventory REST API + Trading API `UploadSiteHostedPictures` for images; Mercari via Playwright (no public API)
+- **Listing**: eBay Inventory REST API + Media API `createImageFromFile` for images; Mercari via Playwright (no public API)
 - **Frontend**: Vanilla HTML/CSS/JS, no framework, Inter font
 
 ## Environment Variables (in `.env`)
@@ -174,7 +174,9 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 `photos` are refs like `<batch>/game_0/photo_0.jpg`, resolved by `resolve_photo()` which refuses anything outside `uploads/`. The browser never sends file paths.
 
 ## eBay API Flow
-1. `POST /ws/api.dll` (Trading API `UploadSiteHostedPictures`) — upload images in parallel, get `ebayimg.com` URLs
+1. `POST https://apim.ebay.com/commerce/media/v1_beta/image/create_image_from_file` (Media API, multipart field
+   `image`, scope `sell.inventory`) — upload images in parallel, get `imageUrl` (`i.ebayimg.com`). The Trading API's
+   `UploadSiteHostedPictures` was retired by eBay in late Oct 2026 (404 "Resource not found"; other Trading calls → 410 Gone)
 2. `PUT /sell/inventory/v1/inventory_item/{sku}` — product, aspects, images, condition + `conditionDescription`
 3. `POST /sell/inventory/v1/offer` — price, policies, category `139973` (Video Games)
 4. `POST /sell/inventory/v1/offer/{offerId}/publish`
@@ -182,6 +184,8 @@ auto-refreshes the 2-hour access token from the ~18-month refresh token. A banne
 **Known eBay quirks:**
 - Error 25001 / 5xx on inventory is transient — retried once
 - Error 25002 ("Add at least 1 photo") means image upload failed — check token scopes
+- The Trading API (`/ws/api.dll`) is gone (Oct 2026) — don't use it for new calls (incl. `VerifyAddFixedPriceItem` /
+  `GetMyeBaySelling`, which were used for debugging in Sep 2026)
 - Error 25021 (invalid condition for the category): Video Games only allows New, Like New, Very Good, Good,
   Acceptable — no "Excellent". An old `USED_EXCELLENT` is published as `USED_VERY_GOOD`
 - Error 25001 at the publish step is also transient — retried once

@@ -22,7 +22,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
 from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
-from xml.sax.saxutils import escape as xml_escape
 
 import requests
 from dotenv import load_dotenv
@@ -66,6 +65,7 @@ APP_PIN = os.environ.get("APP_PIN", "")
 # eBay
 EBAY_SANDBOX = _env_bool("EBAY_SANDBOX", False)
 EBAY_BASE_URL = "https://api.sandbox.ebay.com" if EBAY_SANDBOX else "https://api.ebay.com"
+EBAY_MEDIA_URL = "https://apim.sandbox.ebay.com" if EBAY_SANDBOX else "https://apim.ebay.com"  # Media API (photos)
 EBAY_AUTH_URL = "https://auth.sandbox.ebay.com" if EBAY_SANDBOX else "https://auth.ebay.com"
 EBAY_FULFILLMENT_POLICY = os.environ.get("EBAY_FULFILLMENT_POLICY", "")
 EBAY_PAYMENT_POLICY = os.environ.get("EBAY_PAYMENT_POLICY", "")
@@ -810,30 +810,23 @@ def get_ebay_token() -> str:
 # ─────────────────────────────────────────
 
 def upload_to_ebay_eps(image_path: Path, token: str) -> tuple[str, str]:
-    """Upload one image via Trading API UploadSiteHostedPictures. Returns (ebayimg.com URL, error)."""
-    headers = {
-        "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
-        "X-EBAY-API-CALL-NAME": "UploadSiteHostedPictures",
-        "X-EBAY-API-IAF-TOKEN": token,
-    }
-    xml_body = f"""<?xml version="1.0" encoding="utf-8"?>
-<UploadSiteHostedPicturesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <PictureName>{xml_escape(image_path.name)}</PictureName>
-</UploadSiteHostedPicturesRequest>"""
-    try:
-        files = {
-            "XML Payload": ("payload.xml", xml_body.encode("utf-8"), "text/xml"),
-            "image": (image_path.name, image_path.read_bytes(), "image/jpeg"),
-        }
-        text = requests.post(f"{EBAY_BASE_URL}/ws/api.dll", headers=headers, files=files, timeout=60).text
-        match = re.search(r"<FullURL>(.*?)</FullURL>", text)
-        if match:
-            return match.group(1), ""
-        error = re.search(r"<LongMessage>(.*?)</LongMessage>", text)
-        error = error.group(1) if error else text[:200]
-    except Exception as e:
-        error = str(e)
+    """Upload one image to eBay Picture Services via the Media API (createImageFromFile).
+    Returns (ebayimg.com URL, error). The Trading API's UploadSiteHostedPictures used before was
+    retired by eBay in Oct 2026 (it now answers 404 "Resource not found")."""
+    error = ""
+    for attempt in range(2):
+        try:
+            resp = requests.post(f"{EBAY_MEDIA_URL}/commerce/media/v1_beta/image/create_image_from_file",
+                                 headers={"Authorization": f"Bearer {token}"}, timeout=60,
+                                 files={"image": (image_path.name, image_path.read_bytes(), "image/jpeg")})
+            if resp.status_code in (200, 201) and resp.json().get("imageUrl"):
+                return resp.json()["imageUrl"], ""
+            error = _ebay_error(f"HTTP {resp.status_code}", resp)
+            if resp.status_code < 500 and resp.status_code != 429:
+                break  # a real error (bad token, bad image) — retrying won't help
+        except Exception as e:
+            error = str(e)
+        time.sleep(2)
     print(f"[eps] Upload failed for {image_path.name}: {error}")
     return "", error
 
