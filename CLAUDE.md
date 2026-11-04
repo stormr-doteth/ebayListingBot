@@ -228,7 +228,8 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python app.py          # http://0.0.0.0:8080 — from phone: http://<mac-ip>:8080
 ```
-Claude Code must be installed and logged in (`claude` once in Terminal). Restart: `lsof -ti:8080 | xargs kill; ./venv/bin/python app.py`.
+Claude Code must be installed and logged in (`claude` once in Terminal). If analysis fails with "OAuth session
+expired and could not be refreshed" (`claude auth status` → `loggedIn: false`), run `claude auth login` and sign in. Restart: `lsof -ti:8080 | xargs kill; ./venv/bin/python app.py`.
 
 ## Access From Anywhere
 Use Tailscale (no port forwarding). The app is not meant for the public internet — set `APP_PIN` anyway.
@@ -247,9 +248,9 @@ Use Tailscale (no port forwarding). The app is not meant for the public internet
   (rebuilds the master CSV), copy it here, and map its names in `PLATFORM_TO_CSV`. Switch was added this way (Oct 2026)
 - [ ] Analysis speed: Claude dominates (~25s per game, `ANALYZE_WORKERS=3` at a time); photo uploads take
   ~0.1–0.3s each. Next step: try `ANALYZE_WORKERS=6` in `.env` (drop to 5 if games fail from plan rate limits)
-- [ ] Sonnet 5.5: `CLAUDE_MODEL=sonnet` resolved to `claude-sonnet-5` with Claude Code 2.1.273 (Homebrew cask,
-  Oct 2026). Upgrade (`brew upgrade --cask claude-code`), then check what `sonnet` resolves to
-  (`claude -p "OK" --model sonnet --output-format json` → `modelUsage`)
+- [x] Sonnet 5.5: done Oct 28 2026 — upgraded the Homebrew cask to Claude Code 2.1.308, and `CLAUDE_MODEL=sonnet`
+  now resolves to `claude-sonnet-5-5` (2.1.273 gave `claude-sonnet-5`). Check with
+  `claude -p "OK" --model sonnet --output-format json` → `modelUsage`
 - [ ] Every failed publish leaves an unpublished eBay offer + inventory item (SKU `RL-…`). They're invisible
   to buyers but pile up; a cleanup (delete offers with status UNPUBLISHED) would tidy the account
 - [ ] Only one machine should run the app at a time — two copies would both run the sale sync.
