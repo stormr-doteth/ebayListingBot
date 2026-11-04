@@ -76,6 +76,13 @@ Per game, run in a thread pool as a background job (`/analyze-batch` → `job_id
 2. **`analyze_photos()`** — ONE `claude -p` call with the photos attached via `@photo_N.jpg` mentions (the CLI only attaches ~3, so extras go on a numbered contact sheet and Claude may `Read` a full-size photo). Returns `GAME_INFO_SCHEMA`: identification (title, platform, variant, region, MPN, completeness), condition, authenticity, confidence, flags, buyer-facing `condition_notes`, **plus the eBay title** and a rough `estimated_loose/cib` fallback. Claude does NOT write the description.
 3. **`price_listing()`** — pricing is deterministic, not Claude's call: PriceCharting API rows if `PRICECHARTING_API_KEY` is set, else the local CSV. `pick_price_row()` chooses the row for the exact variant (uses the variant field, listing title and MPN suffix like `GH`). Game + box + manual → **CIB** price; anything less → **loose**. Not in the guide → Claude's estimate, flagged.
 4. **`_clean_game_info()` / `_clean_title()`** — guard rails: plain item-specific values, 80-char title, strip "Authentic" unless authenticity is `likely_authentic`.
+5. **`_includes_flags()`** — flags a title that says CIB / Complete / w/ Manual while `has_manual` is false (or "Cart Only"
+   while it's true): Includes and the CIB/loose price both follow `has_manual`.
+
+**Manual detection:** only the first 2 photos are attached at full size; the rest are on `sheet.jpg`, and a manual held
+in an open case's left clips was being read as a "cover insert" and dropped (Nov 2026 — 4 of 10 CIB games listed without
+a manual). The prompt now describes what a manual looks like, says to check every photo and Read one that's too small,
+and no longer says "if something might be missing, leave it out". Re-running that batch found all 4, no false positives.
 
 **Photo dump** (`/group-photos`): up to 60 photos of many games at once. They're saved once, sorted by EXIF capture
 time (fallback: file lastModified, then upload order) and renumbered, then ONE `claude -p` call (effort `medium` —
