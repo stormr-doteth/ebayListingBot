@@ -401,7 +401,7 @@ GAME_INFO_SCHEMA = {
         "mpn": {"type": "string", "description": "The single part number exactly as printed (e.g. NUS-NSME-USA, SLUS-00594), no commentary. 'N/A' if not readable"},
         "has_game": {"type": "boolean", "description": "False if this is only a box/manual"},
         "has_box": {"type": "boolean"},
-        "has_manual": {"type": "boolean"},
+        "has_manual": {"type": "boolean", "description": "True if any photo shows the instruction booklet — including one held in the clips inside an open case"},
         "extras": {"type": "array", "items": {"type": "string"}, "description": "Inserts, posters, maps, registration cards visible"},
         "condition_notes": {"type": "string", "description": "Buyers read this: one or two plain sentences on the actual wear (label tears, fading, scratches, writing, stickers, box crushing) plus relevant seller notes (e.g. new save battery)"},
         "condition": {"type": "string", "enum": CONDITIONS},
@@ -503,8 +503,15 @@ Identify exactly what it is and grade it:
   Part-number suffixes matter: e.g. SLUS-xxxxxGH = Greatest Hits, -P = Platinum.
 - variant: just the name (e.g. "Greatest Hits"), or "" for a standard first release.
 - Region: judge from rating logos, language, part-number suffix (-USA, -EUR, -JPN, SLUS/SLES/SLPS).
-- has_box / has_manual / extras: only what you can actually see — they go in the listing as
-  "Includes". If something might be missing, leave it out.
+- has_box / has_manual / extras: what the photos show — they go in the listing as "Includes" and decide
+  the price (game + box + manual = CIB). Check EVERY photo for each one, including those on the contact sheet.
+  * The manual is the instruction booklet. In an open case (Xbox 360, PS2, PS3, GameCube, Wii, DS, Switch)
+    it is usually held by the clips on the inside left, and its front looks like a smaller copy of the
+    cover art, often with the platform banner — that IS the manual, not a "cover insert" (the cover art
+    itself sits under the clear sleeve on the outside of the case). A booklet photographed on its own,
+    open or closed, is also the manual. For cartridge games the manual is a separate booklet.
+  * If a photo looks like it shows a booklet but is too small to be sure, Read that photo before deciding.
+  * Only say something is included when a photo shows it.
 - Condition: be specific about visible wear. Only use NEW for factory-sealed items.
 - condition_notes goes straight into the listing, so write it for buyers: honest and specific,
   no mention of photos, nothing addressed to the seller, nothing salesy. Include seller's notes
@@ -682,6 +689,17 @@ def price_listing(game_info: dict) -> tuple[dict, list[str]]:
     }, flags
 
 
+def _includes_flags(game_info: dict, title: str) -> list[str]:
+    """Catch Claude contradicting itself about the manual — the Includes line and the CIB/loose price
+    both follow has_manual, so a title saying "CIB" with no manual (or the reverse) needs a look."""
+    says_manual = re.search(r"\b(CIB|complete|w/ ?manual|with manual)\b", title, re.I)
+    if says_manual and not game_info.get("has_manual"):
+        return ["Title says complete but no manual was detected — check Includes (affects the CIB price)"]
+    if game_info.get("has_manual") and re.search(r"\b(cart|disc|game) only\b", title, re.I):
+        return ["Title says game only but a manual was detected — check Includes"]
+    return []
+
+
 def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: bool, progress) -> dict:
     """Full pipeline for one game. `progress(step)` reports identifying/pricing."""
     progress("identifying")
@@ -691,14 +709,15 @@ def analyze_game(photo_dir: Path, photo_refs: list[str], notes: str, tested: boo
     progress("pricing")
     price_info, price_flags = price_listing(game_info)
     matched = price_info["matched"]
+    title = _clean_title(game_info.pop("listing_title", ""), game_info)
     listing = {
-        "title": _clean_title(game_info.pop("listing_title", ""), game_info),
+        "title": title,
         "description": "",  # the browser fills it from listing_template.html
         "condition": game_info["condition"] if game_info.get("condition") in CONDITIONS else "USED_GOOD",
         "suggested_price": price_info["price"],
         "price_reasoning": (f"PriceCharting {price_info['basis']} price for “{matched['title']}”"
                             if matched else f"Claude's {price_info['basis']} estimate (not in the price guide)"),
-        "flags": list(dict.fromkeys(game_info.get("flags", [])[:4] + price_flags)),
+        "flags": list(dict.fromkeys(game_info.get("flags", [])[:4] + price_flags + _includes_flags(game_info, title))),
     }
     usage["total_tokens"] = usage["input"] + usage["cache_write"] + usage["cache_read"] + usage["output"]
     print(f"[usage] {game_info['game_title']}: {usage['total_tokens']:,} tokens "
